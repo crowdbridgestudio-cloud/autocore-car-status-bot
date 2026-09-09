@@ -59,6 +59,148 @@ bot.catch((err) => {
 
 
 // ==================================================
+// TELEGRAM POLLING SUPERVISOR
+// ==================================================
+// bot.catch() above only handles errors thrown while processing an
+// update that has already been received by grammY — it does NOT protect
+// bot.start() itself. grammY deliberately does not retry a 409 Conflict
+// (another process is polling with the same token) or a 401 (bad
+// token): it rethrows, which rejects bot.start()'s returned promise and
+// permanently stops polling — nothing else ever calls bot.start() again.
+//
+// This matters because Render's normal rolling deploy briefly runs the
+// outgoing and incoming instances side by side, so both poll with the
+// same BOT_TOKEN for a few seconds — enough to trigger exactly one 409.
+// Before this supervisor existed, that one 409 would silently end
+// polling for the rest of that process's life, while the Express
+// server (admin/super admin/health) kept working normally, since it
+// runs independently in the same process.
+//
+// This function is what makes polling restartable: it wraps bot.start()
+// in a loop that catches that rejection, waits a few seconds, and
+// starts polling again — for as long as the process is alive and not
+// shutting down. It never creates a second Bot instance and never runs
+// more than one copy of this loop (see pollingSupervisorStarted below).
+
+let pollingSupervisorStarted = false;
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runPollingWithRecovery(botInstance) {
+
+    // Defensive guard: this function is only ever called once, from the
+    // bottom of this file, but if that ever changed, this prevents two
+    // overlapping supervisor loops (and therefore two competing
+    // bot.start() calls) from ever running in the same process.
+    if (pollingSupervisorStarted) {
+        console.warn("Telegram polling supervisor is already running — ignoring duplicate start request.");
+        return;
+    }
+    pollingSupervisorStarted = true;
+
+    const MIN_RETRY_DELAY_MS = 5000;
+    const RETRY_JITTER_MS = 5000; // total retry delay lands in the 5-10s range requested
+
+    let shuttingDown = false;
+    let stoppedPermanently = false;
+    let hasStartedOnce = false;
+
+    async function shutdown(signal) {
+
+        if (shuttingDown) return;
+        shuttingDown = true;
+
+        console.log(`Telegram polling: received ${signal}, shutting down — no further retries will be scheduled.`);
+
+        try {
+            // Cleanly cancels the in-flight getUpdates call, if any, and
+            // makes bot.start()'s promise resolve (not reject) below.
+            await botInstance.stop();
+        } catch (err) {
+            console.error("Telegram polling: error while stopping:", err.message);
+        }
+
+        // Registering a signal handler at all replaces Node's default
+        // "exit immediately" behavior for that signal, so we must exit
+        // explicitly once the bot has stopped, or the process could
+        // hang until the host force-kills it.
+        process.exit(0);
+    }
+
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+    process.once("SIGINT", () => shutdown("SIGINT"));
+
+    console.log("Telegram polling starting...");
+
+    while (!shuttingDown) {
+
+        try {
+
+            await botInstance.start({
+                onStart: () => {
+                    console.log(hasStartedOnce ? "Telegram polling resumed." : "Telegram polling started.");
+                    hasStartedOnce = true;
+                }
+            });
+
+            // bot.start() only resolves when polling was stopped on
+            // purpose (bot.stop(), e.g. from shutdown() above) — an
+            // actual polling failure rejects instead, and is handled in
+            // the catch block below. So if we get here, there is
+            // nothing to recover from.
+            console.log("Telegram polling stopped.");
+
+        } catch (err) {
+
+            console.log("Telegram polling stopped.");
+
+            if (shuttingDown) {
+                break;
+            }
+
+            // A 401 means the token itself is invalid/revoked — retrying
+            // cannot ever succeed, so unlike every other error, this one
+            // stops polling permanently for this process instead of
+            // entering the retry loop. The web server keeps running
+            // regardless; fixing this requires a valid BOT_TOKEN and a
+            // restart.
+            if (err && err.error_code === 401) {
+
+                console.error(
+                    "Telegram polling error 401 (invalid or revoked bot token) — " +
+                    "stopping polling permanently for this process. Fix BOT_TOKEN, then restart."
+                );
+
+                stoppedPermanently = true;
+                break;
+            }
+
+            const delay = MIN_RETRY_DELAY_MS + Math.floor(Math.random() * RETRY_JITTER_MS);
+            const seconds = Math.round(delay / 1000);
+
+            if (err && err.error_code === 409) {
+                console.error(`Telegram polling error 409 (another instance is using this bot token), retrying in ${seconds}s...`);
+            } else {
+                console.error(`Telegram polling error (${(err && err.message) || err}), retrying in ${seconds}s...`);
+            }
+
+            // Paced, not tight: this is the only place a failed attempt
+            // leads to another one, and it always waits first.
+            await sleep(delay);
+        }
+    }
+
+    console.log(
+        stoppedPermanently
+            ? "Telegram polling supervisor exiting (stopped permanently — invalid bot token)."
+            : "Telegram polling supervisor exiting (shutdown in progress)."
+    );
+}
+
+
+// ==================================================
 // LANGUAGE RESOLUTION
 // ==================================================
 
@@ -1359,12 +1501,12 @@ app.listen(PORT, () => {
         console.log("🤖 AutoCore Telegram Bot ready in webhook mode (route registered).");
         console.log("    Make sure setWebhook has been called — see deployment notes.");
     } else {
-        console.log("🚀 AutoCore Telegram Bot started (long polling)!");
+        console.log("🚀 AutoCore Telegram Bot: long polling mode enabled (starting below).");
     }
 });
 
 if (!usingWebhook) {
-    bot.start();
+    runPollingWithRecovery(bot);
 }
 
 // Second, independent bot (own token, own long-polling loop) — does

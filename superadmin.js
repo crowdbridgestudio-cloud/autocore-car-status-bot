@@ -254,6 +254,31 @@ const LAYOUT_CSS = `
         color: #991b1b;
     }
 
+    .badge.archived {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .filter-tabs {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+    }
+
+    .filter-tabs a {
+        padding: 6px 12px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-size: 13px;
+        background: #f3f4f6;
+        color: #374151;
+    }
+
+    .filter-tabs a.active {
+        background: #111827;
+        color: white;
+    }
+
     .actions-cell {
         display: flex;
         gap: 6px;
@@ -611,11 +636,11 @@ async function requireSuperAdmin(req, res, next) {
 // COMPANY STATUS HELPERS
 // ==========================================
 
-// Returns { companies, isActiveColumnAvailable }. If `companies.is_active`
-// hasn't been added yet (see migrations/002_add_company_is_active.sql),
-// every company is treated as active and the flag is set to false so the
-// UI can show a "migration needed" notice instead of Activate/Suspend
-// buttons that would just fail.
+// Returns { companies, isActiveColumnAvailable, isArchivedColumnAvailable }.
+// If a column hasn't been added yet (see migrations/002 and 003), the
+// corresponding companies all behave as active/not-archived and the flag
+// is set to false so the UI can show a "migration needed" notice instead
+// of buttons that would just fail.
 async function fetchCompanies() {
 
     const { data, error } = await supabase
@@ -628,8 +653,9 @@ async function fetchCompanies() {
     }
 
     const isActiveColumnAvailable = data.length === 0 || Object.prototype.hasOwnProperty.call(data[0], "is_active");
+    const isArchivedColumnAvailable = data.length === 0 || Object.prototype.hasOwnProperty.call(data[0], "archived_at");
 
-    return { companies: data, isActiveColumnAvailable };
+    return { companies: data, isActiveColumnAvailable, isArchivedColumnAvailable };
 }
 
 
@@ -644,10 +670,10 @@ function isMissingColumnError(error) {
 
 router.get("/", requireSuperAdmin, async (req, res) => {
 
-    let companies, isActiveColumnAvailable;
+    let companies, isActiveColumnAvailable, isArchivedColumnAvailable;
 
     try {
-        ({ companies, isActiveColumnAvailable } = await fetchCompanies());
+        ({ companies, isActiveColumnAvailable, isArchivedColumnAvailable } = await fetchCompanies());
     } catch (error) {
         console.error("Companies fetch error:", error);
         return res.send(renderErrorPage({ title: "❌ Database error", message: error.message }));
@@ -655,13 +681,21 @@ router.get("/", requireSuperAdmin, async (req, res) => {
 
     const totalCompanies = companies.length;
 
-    const activeCompanies = isActiveColumnAvailable
-        ? companies.filter(c => c.is_active !== false).length
-        : totalCompanies;
-
-    const suspendedCompanies = isActiveColumnAvailable
-        ? companies.filter(c => c.is_active === false).length
+    const archivedCompanies = isArchivedColumnAvailable
+        ? companies.filter(c => !!c.archived_at).length
         : 0;
+
+    const activeCompanies = companies.filter(c => {
+        const archived = isArchivedColumnAvailable ? !!c.archived_at : false;
+        const active = isActiveColumnAvailable ? c.is_active !== false : true;
+        return !archived && active;
+    }).length;
+
+    const suspendedCompanies = companies.filter(c => {
+        const archived = isArchivedColumnAvailable ? !!c.archived_at : false;
+        const active = isActiveColumnAvailable ? c.is_active !== false : true;
+        return !archived && !active;
+    }).length;
 
     const { count: totalCars } = await supabase
         .from("cars")
@@ -682,28 +716,79 @@ router.get("/", requireSuperAdmin, async (req, res) => {
         return { ...company, carsCount: carsCount || 0, customersCount: customersCount || 0 };
     }));
 
-    const rows = companiesWithCounts.map(company => {
+    // Simple query-param filter over an already-small list — no need for
+    // a DB-level filter at this scale.
+    const filter = ["active", "archived"].includes(req.query.filter) ? req.query.filter : "all";
+
+    const filteredCompanies = companiesWithCounts.filter(company => {
+
+        const isArchived = isArchivedColumnAvailable ? !!company.archived_at : false;
+
+        if (filter === "archived") return isArchived;
+        if (filter === "active") return !isArchived;
+        return true;
+    });
+
+    const rows = filteredCompanies.map(company => {
 
         const isActive = isActiveColumnAvailable ? company.is_active !== false : true;
+        const isArchived = isArchivedColumnAvailable ? !!company.archived_at : false;
 
         const createdDate = company.created_at
             ? new Date(company.created_at).toLocaleDateString()
             : "-";
 
-        const toggleButton = !isActiveColumnAvailable
-            ? `<span style="color:#9ca3af;font-size:12px;">migration required</span>`
-            : isActive
-                ? `
-                    <form class="inline" method="POST" action="/superadmin/companies/${company.id}/suspend"
-                          onsubmit="return confirm('Suspend ${escapeJsString(company.name)}? Their admin panel will stop working until reactivated.');">
-                        <button class="btn btn-red" type="submit">Suspend</button>
-                    </form>
-                `
+        let statusBadge;
+
+        if (isArchived) {
+            statusBadge = `<span class="badge archived">Archived</span>`;
+        } else if (!isActiveColumnAvailable) {
+            statusBadge = `<span class="badge active">Active</span>`;
+        } else if (isActive) {
+            statusBadge = `<span class="badge active">Active</span>`;
+        } else {
+            statusBadge = `<span class="badge suspended">Suspended</span>`;
+        }
+
+        let actionButtons;
+
+        if (isArchived) {
+
+            actionButtons = `
+                <form class="inline" method="POST" action="/superadmin/companies/${company.id}/restore">
+                    <button class="btn btn-green" type="submit">Restore</button>
+                </form>
+                <a class="btn btn-red" href="/superadmin/companies/${company.id}/delete-permanently">Delete…</a>
+            `;
+
+        } else {
+
+            const suspendToggle = !isActiveColumnAvailable
+                ? `<span style="color:#9ca3af;font-size:12px;">migration required</span>`
+                : isActive
+                    ? `
+                        <form class="inline" method="POST" action="/superadmin/companies/${company.id}/suspend"
+                              onsubmit="return confirm('Suspend ${escapeJsString(company.name)}? Their admin panel will stop working until reactivated.');">
+                            <button class="btn btn-red" type="submit">Suspend</button>
+                        </form>
+                    `
+                    : `
+                        <form class="inline" method="POST" action="/superadmin/companies/${company.id}/activate">
+                            <button class="btn btn-green" type="submit">Activate</button>
+                        </form>
+                    `;
+
+            const archiveButton = !isArchivedColumnAvailable
+                ? ""
                 : `
-                    <form class="inline" method="POST" action="/superadmin/companies/${company.id}/activate">
-                        <button class="btn btn-green" type="submit">Activate</button>
+                    <form class="inline" method="POST" action="/superadmin/companies/${company.id}/archive"
+                          onsubmit="return confirm('Archive ${escapeJsString(company.name)}? Their admin panel and customer bot access will stop working, but no data is deleted. You can restore it later.');">
+                        <button class="btn btn-outline" type="submit">Archive</button>
                     </form>
                 `;
+
+            actionButtons = suspendToggle + archiveButton;
+        }
 
         return `
             <tr>
@@ -712,18 +797,14 @@ router.get("/", requireSuperAdmin, async (req, res) => {
                 </td>
                 <td>${escapeHtml(company.phone) || "-"}</td>
                 <td>${escapeHtml(company.address) || "-"}</td>
-                <td>
-                    <span class="badge ${isActive ? "active" : "suspended"}">
-                        ${isActive ? "Active" : "Suspended"}
-                    </span>
-                </td>
+                <td>${statusBadge}</td>
                 <td>${company.carsCount}</td>
                 <td>${company.customersCount}</td>
                 <td>${createdDate}</td>
                 <td>
                     <div class="actions-cell">
                         <a class="btn btn-outline" href="/superadmin/companies/${company.id}/edit">Edit</a>
-                        ${toggleButton}
+                        ${actionButtons}
                     </div>
                 </td>
             </tr>
@@ -744,6 +825,14 @@ router.get("/", requireSuperAdmin, async (req, res) => {
             </div>
         ` : ""}
 
+        ${!isArchivedColumnAvailable ? `
+            <div class="notice warn">
+                ⚠️ The <code>companies.archived_at</code> column doesn't exist yet, so Archive/Restore is
+                disabled. Run <code>migrations/003_add_company_archive.sql</code> in the Supabase SQL editor
+                to enable it.
+            </div>
+        ` : ""}
+
         <div class="cards">
             <div class="card"><div class="value">${totalCompanies}</div><div class="label">Total companies</div></div>
             <div class="card"><div class="value">${activeCompanies}</div><div class="label">Active companies</div></div>
@@ -754,6 +843,12 @@ router.get("/", requireSuperAdmin, async (req, res) => {
 
         <div class="panel">
             <h2>Companies</h2>
+
+            <div class="filter-tabs">
+                <a href="/superadmin" class="${filter === "all" ? "active" : ""}">All (${totalCompanies})</a>
+                <a href="/superadmin?filter=active" class="${filter === "active" ? "active" : ""}">Active (${totalCompanies - archivedCompanies})</a>
+                <a href="/superadmin?filter=archived" class="${filter === "archived" ? "active" : ""}">Archived (${archivedCompanies})</a>
+            </div>
 
             <div class="table-wrap">
                 <table>
@@ -770,7 +865,7 @@ router.get("/", requireSuperAdmin, async (req, res) => {
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || `<tr><td colspan="8">No companies yet.</td></tr>`}
+                        ${rows || `<tr><td colspan="8">No companies in this view.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -1332,6 +1427,190 @@ async function setCompanyActive(req, res, isActive) {
 
 router.post("/companies/:id/activate", requireSuperAdmin, (req, res) => setCompanyActive(req, res, true));
 router.post("/companies/:id/suspend", requireSuperAdmin, (req, res) => setCompanyActive(req, res, false));
+
+
+// ==========================================
+// ARCHIVE / RESTORE
+// ==========================================
+// Deliberately separate from Suspend/Activate above (different column,
+// different meaning): Suspend is a temporary operational block; Archive
+// means the company is no longer active but its data is fully retained
+// and it can be Restored later. Neither one ever deletes anything.
+
+router.post("/companies/:id/archive", requireSuperAdmin, async (req, res) => {
+
+    const companyId = req.params.id;
+
+    const { error } = await supabase
+        .from("companies")
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", companyId);
+
+    if (error) {
+
+        console.error("Company archive error:", error);
+
+        const message = isMissingColumnError(error)
+            ? "The `companies.archived_at` column doesn't exist yet. Run migrations/003_add_company_archive.sql in the Supabase SQL editor, then try again."
+            : error.message;
+
+        return res.send(renderErrorPage({ title: "❌ Could not archive company", message }));
+    }
+
+    res.redirect("/superadmin?filter=archived");
+});
+
+
+router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
+
+    const companyId = req.params.id;
+
+    const { error } = await supabase
+        .from("companies")
+        .update({ archived_at: null })
+        .eq("id", companyId);
+
+    if (error) {
+
+        console.error("Company restore error:", error);
+
+        const message = isMissingColumnError(error)
+            ? "The `companies.archived_at` column doesn't exist yet. Run migrations/003_add_company_archive.sql in the Supabase SQL editor, then try again."
+            : error.message;
+
+        return res.send(renderErrorPage({ title: "❌ Could not restore company", message }));
+    }
+
+    res.redirect("/superadmin");
+});
+
+
+// ==========================================
+// PERMANENT DELETE
+// ==========================================
+// Separate, deliberately dangerous-looking path from Archive. Requires
+// typing the exact company name to confirm. This is a real, irreversible
+// delete — the database cascades it to that company's customers, cars,
+// status_history, and admin_accounts (verified empirically: all four
+// have ON DELETE CASCADE back to companies.id). Only reachable through
+// /superadmin/*, which normal company admins have no session/cookie
+// access to at all.
+
+router.get("/companies/:id/delete-permanently", requireSuperAdmin, async (req, res) => {
+
+    const { data: company, error } = await supabase
+        .from("companies")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+    if (error || !company) {
+        return res.send(renderErrorPage({ title: "❌ Company not found" }));
+    }
+
+    const [{ count: carsCount }, { count: customersCount }, { count: adminsCount }] = await Promise.all([
+        supabase.from("cars").select("id", { count: "exact", head: true }).eq("company_id", company.id),
+        supabase.from("customers").select("id", { count: "exact", head: true }).eq("company_id", company.id),
+        supabase.from("admin_accounts").select("id", { count: "exact", head: true }).eq("company_id", company.id)
+    ]);
+
+    const body = `
+        <div class="top-row">
+            <h1 style="color:#991b1b;">☠️ Permanently delete company</h1>
+        </div>
+
+        <div class="panel" style="max-width:560px; border: 2px solid #fecaca;">
+
+            <div class="notice error">
+                <strong>This cannot be undone.</strong> Deleting
+                <strong>${escapeHtml(company.name)}</strong> will permanently remove:
+                <ul style="margin:8px 0 0 18px; padding:0;">
+                    <li>${customersCount || 0} customer${customersCount === 1 ? "" : "s"}</li>
+                    <li>${carsCount || 0} vehicle${carsCount === 1 ? "" : "s"} and their full status history</li>
+                    <li>${adminsCount || 0} admin account${adminsCount === 1 ? "" : "s"}</li>
+                </ul>
+                If you want to keep this data but stop the company from operating, use
+                <strong>Archive</strong> instead — go back and choose that.
+            </div>
+
+            <form method="POST" action="/superadmin/companies/${company.id}/delete-permanently">
+
+                <label>
+                    Type the exact company name (<strong>${escapeHtml(company.name)}</strong>) to confirm
+                </label>
+                <input name="confirm_name" autocomplete="off" required />
+
+                <div style="margin-top:22px; display:flex; gap:10px;">
+                    <a class="btn btn-outline" href="/superadmin" style="flex:1; text-align:center;">Cancel</a>
+                    <button class="btn btn-red" type="submit" style="flex:1;">Permanently delete</button>
+                </div>
+
+            </form>
+
+        </div>
+    `;
+
+    res.send(renderLayout({
+        active: "companies",
+        title: "Delete company",
+        adminName: req.session.superAdminName,
+        body
+    }));
+});
+
+
+router.post("/companies/:id/delete-permanently", requireSuperAdmin, async (req, res) => {
+
+    const companyId = req.params.id;
+    const { confirm_name } = req.body;
+
+    const { data: company, error: lookupError } = await supabase
+        .from("companies")
+        .select("*")
+        .eq("id", companyId)
+        .maybeSingle();
+
+    if (lookupError || !company) {
+        return res.send(renderErrorPage({ title: "❌ Company not found" }));
+    }
+
+    if (!confirm_name || confirm_name.trim() !== company.name) {
+
+        return res.send(renderErrorPage({
+            title: "❌ Name did not match — nothing was deleted",
+            message: `You typed "${confirm_name || ""}", which doesn't exactly match "${company.name}". Go back and try again.`,
+            backHref: `/superadmin/companies/${company.id}/delete-permanently`,
+            backLabel: "← Back"
+        }));
+    }
+
+    const { error: deleteError } = await supabase
+        .from("companies")
+        .delete()
+        .eq("id", companyId);
+
+    if (deleteError) {
+
+        console.error("Permanent company delete error:", deleteError);
+
+        return res.send(renderErrorPage({
+            title: "❌ Could not delete company",
+            message: deleteError.message
+        }));
+    }
+
+    res.send(renderLayout({
+        active: "companies",
+        title: "Company deleted",
+        adminName: req.session.superAdminName,
+        body: `
+            <div class="notice success">
+                ✅ <strong>${escapeHtml(company.name)}</strong> and all of its data have been permanently deleted.
+            </div>
+            <a class="btn btn-indigo" href="/superadmin">🏠 Back to dashboard</a>
+        `
+    }));
+});
 
 
 module.exports = router;

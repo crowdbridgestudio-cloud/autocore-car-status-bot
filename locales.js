@@ -211,7 +211,15 @@ const STRINGS = {
         contact_address_missing: "Address not specified",
         status_updated_title: "🔄 *Status updated*\n\n",
         language_prompt: "🌐 Please choose your language:",
-        language_set: "✅ Language set to {{language}}"
+        language_set: "✅ Language set to {{language}}",
+        btn_delete: "🗑 Delete vehicle",
+        btn_delete_confirm: "🗑 Delete",
+        btn_delete_cancel: "❌ Cancel",
+        delete_confirm: "⚠️ *{{brand}} {{model}}* ({{registration}})\n\nAre you sure you want to delete this vehicle?\nThis action cannot be undone.",
+        delete_success: "✅ Vehicle deleted.",
+        delete_cancelled: "❌ Deletion cancelled.",
+        delete_error: "❌ Could not delete the vehicle. Please try again.",
+        company_archived: "❌ This service is currently unavailable. Please contact the workshop directly."
     },
 
     az: {
@@ -254,7 +262,15 @@ const STRINGS = {
         contact_address_missing: "Ünvan qeyd edilməyib",
         status_updated_title: "🔄 *Status yeniləndi*\n\n",
         language_prompt: "🌐 Zəhmət olmasa dilinizi seçin:",
-        language_set: "✅ Dil dəyişdirildi: {{language}}"
+        language_set: "✅ Dil dəyişdirildi: {{language}}",
+        btn_delete: "🗑 Avtomobili sil",
+        btn_delete_confirm: "🗑 Sil",
+        btn_delete_cancel: "❌ Ləğv et",
+        delete_confirm: "⚠️ *{{brand}} {{model}}* ({{registration}})\n\nBu avtomobili silmək istədiyinizə əminsiniz?\nBu əməliyyat geri qaytarıla bilməz.",
+        delete_success: "✅ Avtomobil silindi.",
+        delete_cancelled: "❌ Silinmə ləğv edildi.",
+        delete_error: "❌ Avtomobili silmək mümkün olmadı. Zəhmət olmasa yenidən cəhd edin.",
+        company_archived: "❌ Bu servis hazırda əlçatan deyil. Zəhmət olmasa birbaşa servislə əlaqə saxlayın."
     },
 
     tr: {
@@ -297,7 +313,15 @@ const STRINGS = {
         contact_address_missing: "Adres belirtilmemiş",
         status_updated_title: "🔄 *Durum güncellendi*\n\n",
         language_prompt: "🌐 Lütfen dilinizi seçin:",
-        language_set: "✅ Dil değiştirildi: {{language}}"
+        language_set: "✅ Dil değiştirildi: {{language}}",
+        btn_delete: "🗑 Aracı sil",
+        btn_delete_confirm: "🗑 Sil",
+        btn_delete_cancel: "❌ İptal",
+        delete_confirm: "⚠️ *{{brand}} {{model}}* ({{registration}})\n\nBu aracı silmek istediğinizden emin misiniz?\nBu işlem geri alınamaz.",
+        delete_success: "✅ Araç silindi.",
+        delete_cancelled: "❌ Silme işlemi iptal edildi.",
+        delete_error: "❌ Araç silinemedi. Lütfen tekrar deneyin.",
+        company_archived: "❌ Bu servis şu anda kullanılamıyor. Lütfen servisle doğrudan iletişime geçin."
     },
 
     pl: {
@@ -340,7 +364,15 @@ const STRINGS = {
         contact_address_missing: "Nie podano adresu",
         status_updated_title: "🔄 *Status zaktualizowany*\n\n",
         language_prompt: "🌐 Wybierz swój język:",
-        language_set: "✅ Język zmieniony na: {{language}}"
+        language_set: "✅ Język zmieniony na: {{language}}",
+        btn_delete: "🗑 Usuń pojazd",
+        btn_delete_confirm: "🗑 Usuń",
+        btn_delete_cancel: "❌ Anuluj",
+        delete_confirm: "⚠️ *{{brand}} {{model}}* ({{registration}})\n\nCzy na pewno chcesz usunąć ten pojazd?\nTej operacji nie można cofnąć.",
+        delete_success: "✅ Pojazd usunięty.",
+        delete_cancelled: "❌ Usuwanie anulowane.",
+        delete_error: "❌ Nie udało się usunąć pojazdu. Spróbuj ponownie.",
+        company_archived: "❌ Ten serwis jest obecnie niedostępny. Skontaktuj się bezpośrednio z warsztatem."
     },
 
     ru: {
@@ -383,7 +415,15 @@ const STRINGS = {
         contact_address_missing: "Адрес не указан",
         status_updated_title: "🔄 *Статус обновлён*\n\n",
         language_prompt: "🌐 Пожалуйста, выберите язык:",
-        language_set: "✅ Язык изменён на: {{language}}"
+        language_set: "✅ Язык изменён на: {{language}}",
+        btn_delete: "🗑 Удалить автомобиль",
+        btn_delete_confirm: "🗑 Удалить",
+        btn_delete_cancel: "❌ Отмена",
+        delete_confirm: "⚠️ *{{brand}} {{model}}* ({{registration}})\n\nВы уверены, что хотите удалить этот автомобиль?\nЭто действие нельзя отменить.",
+        delete_success: "✅ Автомобиль удалён.",
+        delete_cancelled: "❌ Удаление отменено.",
+        delete_error: "❌ Не удалось удалить автомобиль. Попробуйте ещё раз.",
+        company_archived: "❌ Этот сервис временно недоступен. Пожалуйста, свяжитесь с сервисом напрямую."
     }
 };
 
@@ -446,7 +486,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Car not found",
         status_update_error_title: "❌ Status was not updated",
         language_label: "🌐 Language",
-        account_suspended: "❌ This company's account has been suspended. Please contact support."
+        account_suspended: "❌ This company's account has been suspended. Please contact support.",
+        account_archived: "❌ This company's account has been archived. Please contact support.",
+        delete_car_button: "🗑 Delete",
+        delete_confirm_title: "⚠️ Delete vehicle",
+        delete_confirm_warning: "Are you sure you want to delete this vehicle? This action cannot be undone.",
+        btn_delete_confirm: "🗑 Delete",
+        btn_delete_cancel: "Cancel",
+        delete_success_notice: "✅ Vehicle deleted.",
+        delete_error_title: "❌ Could not delete the vehicle"
     },
 
     pl: {
@@ -486,7 +534,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Nie znaleziono samochodu",
         status_update_error_title: "❌ Status nie został zmieniony",
         language_label: "🌐 Język",
-        account_suspended: "❌ Konto tej firmy zostało zawieszone. Skontaktuj się z pomocą techniczną."
+        account_suspended: "❌ Konto tej firmy zostało zawieszone. Skontaktuj się z pomocą techniczną.",
+        account_archived: "❌ Konto tej firmy zostało zarchiwizowane. Skontaktuj się z pomocą techniczną.",
+        delete_car_button: "🗑 Usuń",
+        delete_confirm_title: "⚠️ Usuń samochód",
+        delete_confirm_warning: "Czy na pewno chcesz usunąć ten samochód? Tej operacji nie można cofnąć.",
+        btn_delete_confirm: "🗑 Usuń",
+        btn_delete_cancel: "Anuluj",
+        delete_success_notice: "✅ Samochód usunięty.",
+        delete_error_title: "❌ Nie udało się usunąć samochodu"
     },
 
     de: {
@@ -526,7 +582,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Fahrzeug nicht gefunden",
         status_update_error_title: "❌ Status wurde nicht geändert",
         language_label: "🌐 Sprache",
-        account_suspended: "❌ Das Konto dieses Unternehmens wurde gesperrt. Bitte kontaktieren Sie den Support."
+        account_suspended: "❌ Das Konto dieses Unternehmens wurde gesperrt. Bitte kontaktieren Sie den Support.",
+        account_archived: "❌ Das Konto dieses Unternehmens wurde archiviert. Bitte kontaktieren Sie den Support.",
+        delete_car_button: "🗑 Löschen",
+        delete_confirm_title: "⚠️ Fahrzeug löschen",
+        delete_confirm_warning: "Möchten Sie dieses Fahrzeug wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+        btn_delete_confirm: "🗑 Löschen",
+        btn_delete_cancel: "Abbrechen",
+        delete_success_notice: "✅ Fahrzeug gelöscht.",
+        delete_error_title: "❌ Fahrzeug konnte nicht gelöscht werden"
     },
 
     tr: {
@@ -566,7 +630,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Araç bulunamadı",
         status_update_error_title: "❌ Durum değiştirilemedi",
         language_label: "🌐 Dil",
-        account_suspended: "❌ Bu firmanın hesabı askıya alındı. Lütfen destek ile iletişime geçin."
+        account_suspended: "❌ Bu firmanın hesabı askıya alındı. Lütfen destek ile iletişime geçin.",
+        account_archived: "❌ Bu firmanın hesabı arşivlendi. Lütfen destek ile iletişime geçin.",
+        delete_car_button: "🗑 Sil",
+        delete_confirm_title: "⚠️ Aracı sil",
+        delete_confirm_warning: "Bu aracı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+        btn_delete_confirm: "🗑 Sil",
+        btn_delete_cancel: "İptal",
+        delete_success_notice: "✅ Araç silindi.",
+        delete_error_title: "❌ Araç silinemedi"
     },
 
     az: {
@@ -606,7 +678,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Avtomobil tapılmadı",
         status_update_error_title: "❌ Status dəyişdirilmədi",
         language_label: "🌐 Dil",
-        account_suspended: "❌ Bu şirkətin hesabı dayandırılıb. Zəhmət olmasa dəstək xidməti ilə əlaqə saxlayın."
+        account_suspended: "❌ Bu şirkətin hesabı dayandırılıb. Zəhmət olmasa dəstək xidməti ilə əlaqə saxlayın.",
+        account_archived: "❌ Bu şirkətin hesabı arxivləşdirilib. Zəhmət olmasa dəstək xidməti ilə əlaqə saxlayın.",
+        delete_car_button: "🗑 Sil",
+        delete_confirm_title: "⚠️ Avtomobili sil",
+        delete_confirm_warning: "Bu avtomobili silmək istədiyinizə əminsiniz? Bu əməliyyat geri qaytarıla bilməz.",
+        btn_delete_confirm: "🗑 Sil",
+        btn_delete_cancel: "Ləğv et",
+        delete_success_notice: "✅ Avtomobil silindi.",
+        delete_error_title: "❌ Avtomobili silmək mümkün olmadı"
     },
 
     ru: {
@@ -646,7 +726,15 @@ const ADMIN_STRINGS = {
         car_not_found_title: "❌ Автомобиль не найден",
         status_update_error_title: "❌ Статус не был изменён",
         language_label: "🌐 Язык",
-        account_suspended: "❌ Аккаунт этой компании приостановлен. Пожалуйста, свяжитесь с поддержкой."
+        account_suspended: "❌ Аккаунт этой компании приостановлен. Пожалуйста, свяжитесь с поддержкой.",
+        account_archived: "❌ Аккаунт этой компании архивирован. Пожалуйста, свяжитесь с поддержкой.",
+        delete_car_button: "🗑 Удалить",
+        delete_confirm_title: "⚠️ Удалить автомобиль",
+        delete_confirm_warning: "Вы уверены, что хотите удалить этот автомобиль? Это действие нельзя отменить.",
+        btn_delete_confirm: "🗑 Удалить",
+        btn_delete_cancel: "Отмена",
+        delete_success_notice: "✅ Автомобиль удалён.",
+        delete_error_title: "❌ Не удалось удалить автомобиль"
     }
 };
 

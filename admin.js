@@ -211,6 +211,7 @@ router.get("/login", (req, res) => {
                 <p>${at(lang, "login_subtitle")}</p>
 
                 ${req.query.suspended ? `<div class="notice">${at(lang, "account_suspended")}</div>` : ""}
+                ${req.query.archived ? `<div class="notice">${at(lang, "account_archived")}</div>` : ""}
 
                 <form method="POST" action="/admin/login">
 
@@ -290,13 +291,13 @@ router.post("/login", async (req, res) => {
     }
 
 
-    // A suspended company's admins must not be able to log in. If the
-    // `companies.is_active` column hasn't been added yet, `company` will
-    // simply come back without that field and this check is skipped —
-    // every company behaves as active until the migration is applied.
+    // A suspended OR archived company's admins must not be able to log
+    // in. If the relevant column hasn't been added yet, it simply comes
+    // back undefined and that specific check is skipped — every company
+    // behaves as active/not-archived until each migration is applied.
     const { data: company } = await supabase
         .from("companies")
-        .select("is_active")
+        .select("is_active, archived_at")
         .eq("id", admin.company_id)
         .maybeSingle();
 
@@ -304,6 +305,14 @@ router.post("/login", async (req, res) => {
 
         return res.send(`
             <h2>${at(lang, "account_suspended")}</h2>
+            <a href="/admin/login?lang=${lang}">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    if (company && company.archived_at) {
+
+        return res.send(`
+            <h2>${at(lang, "account_archived")}</h2>
             <a href="/admin/login?lang=${lang}">${at(lang, "go_back")}</a>
         `);
     }
@@ -382,14 +391,14 @@ async function requireLogin(req, res, next) {
         return res.redirect("/admin/login");
     }
 
-    // Re-check on every request so a company suspended by the super admin
-    // mid-session is immediately logged out, not just blocked at the next
-    // login. Fails open (skips the check) on a lookup error or if the
-    // `is_active` column doesn't exist yet, so a transient DB hiccup never
+    // Re-check on every request so a company suspended or archived by the
+    // super admin mid-session is immediately logged out, not just blocked
+    // at the next login. Fails open (skips the check) on a lookup error
+    // or if a column doesn't exist yet, so a transient DB hiccup never
     // locks admins out of an otherwise-working panel.
     const { data: company, error } = await supabase
         .from("companies")
-        .select("is_active")
+        .select("is_active, archived_at")
         .eq("id", req.session.companyId)
         .maybeSingle();
 
@@ -397,6 +406,13 @@ async function requireLogin(req, res, next) {
 
         return req.session.destroy(() => {
             res.redirect("/admin/login?suspended=1");
+        });
+    }
+
+    if (!error && company && company.archived_at) {
+
+        return req.session.destroy(() => {
+            res.redirect("/admin/login?archived=1");
         });
     }
 
@@ -509,6 +525,13 @@ router.get("/", requireLogin, async (req, res) => {
                         class="qr"
                     >
                         ${at(lang, "qr_button")}
+                    </a>
+
+                    <a
+                        href="/admin/car/${car.id}/delete"
+                        class="qr delete-link"
+                    >
+                        ${at(lang, "delete_car_button")}
                     </a>
 
                 </div>
@@ -634,6 +657,25 @@ router.get("/", requireLogin, async (req, res) => {
                     border-radius: 7px;
                 }
 
+                .qr.delete-link {
+                    background: #fee2e2;
+                    color: #991b1b;
+                    margin-left: 8px;
+                }
+
+                .notice-banner {
+                    max-width: 1000px;
+                    margin: 15px auto 0;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    font-size: 14px;
+                }
+
+                .notice-banner.success {
+                    background: #dcfce7;
+                    color: #166534;
+                }
+
                 @media(max-width:700px) {
 
                     .car {
@@ -668,6 +710,7 @@ router.get("/", requireLogin, async (req, res) => {
 
             </header>
 
+            ${req.query.deleted ? `<div class="notice-banner success">${at(lang, "delete_success_notice")}</div>` : ""}
 
             <div class="container">
 
@@ -1060,6 +1103,115 @@ router.get("/car/:id", requireLogin, async (req, res) => {
 
         </html>
     `);
+});
+
+
+// ==========================================
+// DELETE CAR — CONFIRMATION PAGE
+// ==========================================
+
+router.get("/car/:id/delete", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const carId = req.params.id;
+
+    const { data: car, error } = await supabase
+        .from("cars")
+        .select("*")
+        .eq("id", carId)
+        .eq("company_id", req.session.companyId)
+        .maybeSingle();
+
+    if (error || !car) {
+
+        return res.send(`
+            <h2>${at(lang, "car_not_found_title")}</h2>
+            <a href="/admin">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>${at(lang, "delete_confirm_title")}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: Arial, sans-serif; background: #f4f6f8; padding: 40px 20px; }
+                .box { max-width: 440px; margin: auto; background: white; padding: 30px; border-radius: 15px; text-align: center; }
+                h1 { color: #991b1b; font-size: 20px; margin-top: 0; }
+                p { color: #374151; }
+                .car-name { font-weight: bold; font-size: 17px; margin: 10px 0 20px; }
+                .actions { display: flex; gap: 10px; margin-top: 20px; }
+                button, a.btn { flex: 1; padding: 13px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; text-decoration: none; text-align: center; font-family: inherit; }
+                .btn-delete { background: #dc2626; color: white; width: 100%; }
+                .btn-cancel { background: #e5e7eb; color: #111827; }
+            </style>
+        </head>
+        <body>
+            <div class="box">
+                <h1>${at(lang, "delete_confirm_title")}</h1>
+                <div class="car-name">
+                    🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}
+                    ${car.registration ? `(${escapeHtml(car.registration)})` : ""}
+                </div>
+                <p>${at(lang, "delete_confirm_warning")}</p>
+                <div class="actions">
+                    <a class="btn btn-cancel" href="/admin">${at(lang, "btn_delete_cancel")}</a>
+                    <form method="POST" action="/admin/car/${car.id}/delete" style="flex:1; margin:0;">
+                        <button type="submit" class="btn-delete">${at(lang, "btn_delete_confirm")}</button>
+                    </form>
+                </div>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+
+// ==========================================
+// DELETE CAR — EXECUTE
+// ==========================================
+
+router.post("/car/:id/delete", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const carId = req.params.id;
+
+    // Ownership check IS the WHERE clause — this can never delete a car
+    // belonging to another company, no matter what id is in the URL.
+    // status_history for this car cascades automatically at the database
+    // level (empirically verified — ON DELETE CASCADE on
+    // status_history.car_id — before this route was written).
+    const { data: deletedRows, error } = await supabase
+        .from("cars")
+        .delete()
+        .eq("id", carId)
+        .eq("company_id", req.session.companyId)
+        .select();
+
+    if (error) {
+
+        console.error("Car deletion error:", error);
+
+        return res.send(`
+            <h2>${at(lang, "delete_error_title")}</h2>
+            <pre>${escapeHtml(error.message)}</pre>
+            <a href="/admin">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+
+        return res.send(`
+            <h2>${at(lang, "car_not_found_title")}</h2>
+            <a href="/admin">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    res.redirect("/admin?deleted=1");
 });
 
 

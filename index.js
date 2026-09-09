@@ -1,11 +1,33 @@
 require("dotenv").config();
 
+// ==================================================
+// PRODUCTION SAFETY NETS
+// ==================================================
+// Defense-in-depth alongside bot.catch() below: log anything unexpected
+// that still slips through (from either bot, or any stray promise
+// anywhere in the app) instead of silently crashing the whole service.
+// Deliberately does NOT call process.exit() — the specific known crash
+// causes (bot.catch missing, setMyCommands unawaited) are fixed at their
+// source below; this is only a last-resort net for genuinely unexpected
+// errors so a single bad event doesn't take down both the bot and the
+// Admin/Super Admin panels running in the same process. Never logs
+// request/response bodies, headers, or env vars — only the error itself.
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+    console.error("Uncaught exception:", err);
+});
+
+
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
 const supabase = require("./supabase");
 
 const express = require("express");
 const adminRouter = require("./admin");
 const superAdminRouter = require("./superadmin");
+const { startWorkshopBot } = require("./workshopBot");
 
 const {
     SUPPORTED_LANGS,
@@ -18,6 +40,22 @@ const {
 } = require("./locales");
 
 const bot = new Bot(process.env.BOT_TOKEN);
+
+// grammY's default behavior with NO error handler registered is to let an
+// error thrown inside any handler propagate out of bot.start()'s internal
+// loop as an unhandled promise rejection — which, on Node 18+, terminates
+// the whole process by default. Since this process also runs the Express
+// admin/super-admin servers, that means one bad Telegram update (e.g. the
+// very common "message is not modified" error from a double-tapped button)
+// could take down the entire app, not just the bot. This is the single
+// most important production-safety fix in this file — never remove it.
+bot.catch((err) => {
+
+    console.error(
+        "Telegram bot error (update not fully processed, bot keeps running):",
+        err.message
+    );
+});
 
 
 // ==================================================
@@ -76,6 +114,30 @@ async function setLang(ctx, lang) {
 
 
 // ==================================================
+// ARCHIVED COMPANY GATE
+// ==================================================
+// An archived company (Super Admin > Archive, see migrations/003) must
+// not keep operating as if active — this is distinct from Suspend, which
+// only ever blocked the admin panel. Gracefully treats a missing
+// `archived_at` column as "not archived" so nothing breaks pre-migration.
+
+async function isCompanyArchived(companyId) {
+
+    if (!companyId) return false;
+
+    const { data, error } = await supabase
+        .from("companies")
+        .select("archived_at")
+        .eq("id", companyId)
+        .maybeSingle();
+
+    if (error || !data) return false;
+
+    return !!data.archived_at;
+}
+
+
+// ==================================================
 // CUSTOMER MENU
 // ==================================================
 
@@ -93,6 +155,20 @@ async function showCustomerCars(ctx, edit = false) {
     if (customerError || !customer) {
 
         const message = t(lang, "no_car_linked");
+
+        if (edit) {
+            await ctx.editMessageText(message);
+        } else {
+            await ctx.reply(message);
+        }
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(customer.company_id)) {
+
+        const message = t(lang, "company_archived");
 
         if (edit) {
             await ctx.editMessageText(message);
@@ -157,6 +233,13 @@ async function showCustomerCars(ctx, edit = false) {
             .text(
                 t(lang, "btn_contact"),
                 `contact_service_${car.id}`
+            )
+
+            .row()
+
+            .text(
+                t(lang, "btn_delete"),
+                `delete_car_confirm_${car.id}`
             );
 
 
@@ -317,6 +400,14 @@ bot.command("start", async (ctx) => {
         }
 
 
+        if (await isCompanyArchived(car.company_id)) {
+
+            await ctx.reply(t(lang, "company_archived"));
+
+            return;
+        }
+
+
         const keyboard = new InlineKeyboard()
 
             .text(
@@ -386,7 +477,7 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
 
     const { data: targetCar, error: carLookupError } = await supabase
         .from("cars")
-        .select("id, customer_id")
+        .select("id, customer_id, company_id")
         .eq("id", carId)
         .maybeSingle();
 
@@ -395,6 +486,17 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(targetCar.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -429,10 +531,14 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
 
     if (!customer) {
 
+        // The new customer belongs to whichever company owns the car
+        // they're actually connecting — never a hardcoded default. This
+        // is what keeps a customer visible in the right company's admin
+        // panel (e.g. the "select customer" dropdown on Add Car).
         const { data: newCustomer, error } = await supabase
             .from("customers")
             .insert({
-                company_id: 1,
+                company_id: targetCar.company_id,
                 name: name || "Telegram Customer",
                 telegram_id: telegramId
             })
@@ -549,6 +655,17 @@ bot.callbackQuery(/^car_status_(\d+)$/, async (ctx) => {
     }
 
 
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
     const { data: car } = await supabase
         .from("cars")
         .select("*")
@@ -625,6 +742,17 @@ bot.callbackQuery(/^car_history_(\d+)$/, async (ctx) => {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "customer_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -740,6 +868,17 @@ bot.callbackQuery(/^car_info_(\d+)$/, async (ctx) => {
     }
 
 
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
     const { data: car } = await supabase
         .from("cars")
         .select("*")
@@ -821,6 +960,17 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
     }
 
 
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
     const { data: car } = await supabase
         .from("cars")
         .select(`
@@ -873,6 +1023,203 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
                 )
         }
     );
+
+});
+
+
+// ==================================================
+// DELETE VEHICLE
+// ==================================================
+
+bot.callbackQuery(/^delete_car_confirm_(\d+)$/, async (ctx) => {
+
+    const carId = ctx.match[1];
+    const telegramId = ctx.from.id;
+    const lang = await getLang(ctx);
+
+
+    const { data: customer } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("telegram_id", telegramId)
+        .maybeSingle();
+
+
+    if (!customer) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "customer_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    // Ownership check server-side — a customer can never manipulate
+    // another customer's vehicle by editing the callback_data's car id
+    // manually, since this always re-verifies against their own
+    // customer_id rather than trusting the id alone.
+    const { data: car } = await supabase
+        .from("cars")
+        .select("*")
+        .eq("id", carId)
+        .eq("customer_id", customer.id)
+        .maybeSingle();
+
+
+    if (!car) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "car_not_linked_to_you"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    await ctx.answerCallbackQuery();
+
+
+    await ctx.editMessageText(
+
+        t(lang, "delete_confirm", {
+            brand: car.brand,
+            model: car.model,
+            registration: car.registration || "-"
+        }),
+
+        {
+            parse_mode: "Markdown",
+
+            reply_markup: new InlineKeyboard()
+
+                .text(
+                    t(lang, "btn_delete_confirm"),
+                    `delete_car_execute_${car.id}`
+                )
+
+                .row()
+
+                .text(
+                    t(lang, "btn_delete_cancel"),
+                    `delete_car_cancel_${car.id}`
+                )
+        }
+    );
+
+});
+
+
+bot.callbackQuery(/^delete_car_execute_(\d+)$/, async (ctx) => {
+
+    const carId = ctx.match[1];
+    const telegramId = ctx.from.id;
+    const lang = await getLang(ctx);
+
+
+    const { data: customer } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("telegram_id", telegramId)
+        .maybeSingle();
+
+
+    if (!customer) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "customer_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(customer.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    // Re-verify ownership again at the moment of deletion, not just at the
+    // confirm step — the delete query itself is scoped to customer_id, so
+    // even a forged callback_data car id can only ever affect a car that
+    // is genuinely linked to this Telegram user's own customer record.
+    // (status_history for this car is cleaned up automatically via the
+    // database's ON DELETE CASCADE — verified empirically before this was
+    // implemented, see migrations/ and the FK relationships they assume.)
+    const { data: deletedRows, error: deleteError } = await supabase
+        .from("cars")
+        .delete()
+        .eq("id", carId)
+        .eq("customer_id", customer.id)
+        .select();
+
+
+    if (deleteError) {
+
+        console.error("Car deletion error:", deleteError);
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "delete_error"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (!deletedRows || deletedRows.length === 0) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "car_not_linked_to_you"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    await ctx.answerCallbackQuery({
+        text: t(lang, "delete_success")
+    });
+
+
+    await ctx.editMessageText(t(lang, "delete_success"));
+
+
+    await showCustomerCars(ctx);
+
+});
+
+
+bot.callbackQuery(/^delete_car_cancel_(\d+)$/, async (ctx) => {
+
+    const lang = await getLang(ctx);
+
+    await ctx.answerCallbackQuery();
+
+    await ctx.editMessageText(t(lang, "delete_cancelled"));
+
+    await showCustomerCars(ctx);
 
 });
 
@@ -957,7 +1304,13 @@ bot.api.setMyCommands([
     { command: "start", description: "Start" },
     { command: "status", description: "My cars" },
     { command: "language", description: "Change language" }
-]);
+]).catch((err) => {
+    // A transient failure here (e.g. a momentary network blip at startup)
+    // must not crash the whole process — this call's result was never
+    // awaited before, and an unhandled rejection here is exactly the
+    // class of bug fixed by bot.catch() above, just for a non-update call.
+    console.error("setMyCommands failed (non-fatal):", err.message);
+});
 
 const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
 const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -1013,3 +1366,7 @@ app.listen(PORT, () => {
 if (!usingWebhook) {
     bot.start();
 }
+
+// Second, independent bot (own token, own long-polling loop) — does
+// nothing if WORKSHOP_BOT_TOKEN isn't set. See workshopBot.js.
+startWorkshopBot();

@@ -21,6 +21,25 @@ process.on("uncaughtException", (err) => {
 });
 
 
+// ==================================================
+// RUNTIME INSTANCE IDENTITY
+// ==================================================
+// A short random id generated fresh every time this process starts, plus
+// its OS process id. Both are stamped on every polling-lifecycle log
+// line below so that IF two processes are ever both polling the same
+// BOT_TOKEN (the exact scenario a 409 Conflict indicates), the logs
+// themselves prove it: two different (instance, pid) pairs logging
+// "Telegram polling started" is definitive evidence of two processes,
+// regardless of what's causing there to be two of them. Never derived
+// from, or logged alongside, any secret/token value.
+const crypto = require("crypto");
+const INSTANCE_ID = crypto.randomUUID().slice(0, 8);
+
+function instanceTag() {
+    return `[instance=${INSTANCE_ID} pid=${process.pid}]`;
+}
+
+
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
 const supabase = require("./supabase");
 
@@ -95,7 +114,7 @@ async function runPollingWithRecovery(botInstance) {
     // overlapping supervisor loops (and therefore two competing
     // bot.start() calls) from ever running in the same process.
     if (pollingSupervisorStarted) {
-        console.warn("Telegram polling supervisor is already running — ignoring duplicate start request.");
+        console.warn(`Telegram polling supervisor is already running — ignoring duplicate start request. ${instanceTag()}`);
         return;
     }
     pollingSupervisorStarted = true;
@@ -112,14 +131,14 @@ async function runPollingWithRecovery(botInstance) {
         if (shuttingDown) return;
         shuttingDown = true;
 
-        console.log(`Telegram polling: received ${signal}, shutting down — no further retries will be scheduled.`);
+        console.log(`Telegram polling: received ${signal}, shutting down — no further retries will be scheduled. ${instanceTag()}`);
 
         try {
             // Cleanly cancels the in-flight getUpdates call, if any, and
             // makes bot.start()'s promise resolve (not reject) below.
             await botInstance.stop();
         } catch (err) {
-            console.error("Telegram polling: error while stopping:", err.message);
+            console.error("Telegram polling: error while stopping:", err.message, instanceTag());
         }
 
         // Registering a signal handler at all replaces Node's default
@@ -132,15 +151,22 @@ async function runPollingWithRecovery(botInstance) {
     process.once("SIGTERM", () => shutdown("SIGTERM"));
     process.once("SIGINT", () => shutdown("SIGINT"));
 
-    console.log("Telegram polling starting...");
+    console.log(`Telegram polling starting... ${instanceTag()}`);
 
     while (!shuttingDown) {
 
         try {
 
             await botInstance.start({
-                onStart: () => {
-                    console.log(hasStartedOnce ? "Telegram polling resumed." : "Telegram polling started.");
+                onStart: (botInfo) => {
+
+                    const identity = `[bot=@${botInfo.username} id=${botInfo.id}] ${instanceTag()}`;
+
+                    console.log(
+                        (hasStartedOnce ? "Telegram polling resumed." : "Telegram polling started.") +
+                        ` ${identity}`
+                    );
+
                     hasStartedOnce = true;
                 }
             });
@@ -150,11 +176,11 @@ async function runPollingWithRecovery(botInstance) {
             // actual polling failure rejects instead, and is handled in
             // the catch block below. So if we get here, there is
             // nothing to recover from.
-            console.log("Telegram polling stopped.");
+            console.log(`Telegram polling stopped. ${instanceTag()}`);
 
         } catch (err) {
 
-            console.log("Telegram polling stopped.");
+            console.log(`Telegram polling stopped. ${instanceTag()}`);
 
             if (shuttingDown) {
                 break;
@@ -170,7 +196,7 @@ async function runPollingWithRecovery(botInstance) {
 
                 console.error(
                     "Telegram polling error 401 (invalid or revoked bot token) — " +
-                    "stopping polling permanently for this process. Fix BOT_TOKEN, then restart."
+                    `stopping polling permanently for this process. Fix BOT_TOKEN, then restart. ${instanceTag()}`
                 );
 
                 stoppedPermanently = true;
@@ -181,9 +207,9 @@ async function runPollingWithRecovery(botInstance) {
             const seconds = Math.round(delay / 1000);
 
             if (err && err.error_code === 409) {
-                console.error(`Telegram polling error 409 (another instance is using this bot token), retrying in ${seconds}s...`);
+                console.error(`Telegram polling error 409 (another instance is using this bot token), retrying in ${seconds}s... ${instanceTag()}`);
             } else {
-                console.error(`Telegram polling error (${(err && err.message) || err}), retrying in ${seconds}s...`);
+                console.error(`Telegram polling error (${(err && err.message) || err}), retrying in ${seconds}s... ${instanceTag()}`);
             }
 
             // Paced, not tight: this is the only place a failed attempt
@@ -193,9 +219,10 @@ async function runPollingWithRecovery(botInstance) {
     }
 
     console.log(
-        stoppedPermanently
+        (stoppedPermanently
             ? "Telegram polling supervisor exiting (stopped permanently — invalid bot token)."
-            : "Telegram polling supervisor exiting (shutdown in progress)."
+            : "Telegram polling supervisor exiting (shutdown in progress).")
+        + ` ${instanceTag()}`
     );
 }
 
@@ -1493,7 +1520,7 @@ app.listen(PORT, () => {
 
     const publicUrl = process.env.APP_URL || `http://localhost:${PORT}`;
 
-    console.log(`🌐 AutoCore web server listening on port ${PORT}`);
+    console.log(`🌐 AutoCore web server listening on port ${PORT} ${instanceTag()}`);
     console.log(`🌐 Admin panel: ${publicUrl}/admin`);
     console.log(`🛡️  Super admin panel: ${publicUrl}/superadmin`);
 

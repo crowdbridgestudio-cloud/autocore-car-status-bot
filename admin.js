@@ -22,6 +22,7 @@ const {
 } = require("./locales");
 
 const { escapeHtml } = require("./utils");
+const { HEAD_META, BASE_STYLES, statusBadgeStyle } = require("./adminStyles");
 
 const notificationBot = new Bot(process.env.BOT_TOKEN);
 
@@ -84,12 +85,11 @@ function renderLoginLanguageSwitcher(lang) {
         .join("");
 
     return `
-        <select
-            class="lang-switcher-login"
-            onchange="window.location.href = '/admin/login?lang=' + this.value"
-        >
-            ${options}
-        </select>
+        <div class="lang-switcher">
+            <select onchange="window.location.href = '/admin/login?lang=' + this.value">
+                ${options}
+            </select>
+        </div>
     `;
 }
 
@@ -139,103 +139,53 @@ router.get("/login", (req, res) => {
         <html>
         <head>
             <title>AutoCore Login</title>
-
-            <style>
-                body {
-                    font-family: Arial, sans-serif;
-                    background: #f4f6f8;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    margin: 0;
-                    position: relative;
-                }
-
-                .lang-switcher-login {
-                    position: absolute;
-                    top: 20px;
-                    right: 20px;
-                    padding: 8px;
-                    border-radius: 6px;
-                }
-
-                .box {
-                    background: white;
-                    padding: 40px;
-                    border-radius: 15px;
-                    width: 320px;
-                    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-                }
-
-                h1 {
-                    margin-top: 0;
-                }
-
-                input {
-                    width: 100%;
-                    padding: 12px;
-                    margin: 10px 0;
-                    box-sizing: border-box;
-                }
-
-                button {
-                    width: 100%;
-                    padding: 12px;
-                    background: #111827;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                }
-
-                .notice {
-                    background: #fee2e2;
-                    color: #991b1b;
-                    padding: 10px;
-                    border-radius: 8px;
-                    font-size: 14px;
-                    margin-bottom: 10px;
-                }
-            </style>
+            ${HEAD_META}
+            <style>${BASE_STYLES}</style>
         </head>
 
         <body>
 
-            ${renderLoginLanguageSwitcher(lang)}
+            <div class="login-header">
+                <div class="brand">🚗 AutoCore</div>
+                ${renderLoginLanguageSwitcher(lang)}
+            </div>
 
-            <div class="box">
+            <div class="login-wrap">
 
-                <h1>🚗 AutoCore</h1>
+                <div class="login-box">
 
-                <p>${at(lang, "login_subtitle")}</p>
+                    <h1>${at(lang, "login_subtitle")}</h1>
 
-                ${req.query.suspended ? `<div class="notice">${at(lang, "account_suspended")}</div>` : ""}
-                ${req.query.archived ? `<div class="notice">${at(lang, "account_archived")}</div>` : ""}
+                    ${req.query.suspended ? `<div class="notice-banner error">${at(lang, "account_suspended")}</div>` : ""}
+                    ${req.query.archived ? `<div class="notice-banner error">${at(lang, "account_archived")}</div>` : ""}
 
-                <form method="POST" action="/admin/login">
+                    <form method="POST" action="/admin/login">
 
-                    <input type="hidden" name="lang" value="${lang}" />
+                        <input type="hidden" name="lang" value="${lang}" />
 
-                    <input
-                        type="text"
-                        name="username"
-                        placeholder="${at(lang, "login_username_placeholder")}"
-                        required
-                    />
+                        <label>${at(lang, "login_username_placeholder")}</label>
+                        <input
+                            type="text"
+                            name="username"
+                            autocomplete="username"
+                            required
+                        />
 
-                    <input
-                        type="password"
-                        name="password"
-                        placeholder="${at(lang, "login_password_placeholder")}"
-                        required
-                    />
+                        <label>${at(lang, "login_password_placeholder")}</label>
+                        <input
+                            type="password"
+                            name="password"
+                            autocomplete="current-password"
+                            required
+                        />
 
-                    <button type="submit">
-                        ${at(lang, "login_button")}
-                    </button>
+                        <button type="submit" class="btn btn-primary btn-block">
+                            ${at(lang, "login_button")}
+                        </button>
 
-                </form>
+                    </form>
+
+                </div>
 
             </div>
 
@@ -465,81 +415,80 @@ router.get("/", requireLogin, async (req, res) => {
 
     const carCards = cars.map(car => {
 
+        const searchKey = escapeHtml(
+            [car.brand, car.model, car.registration, car.customers?.name]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase()
+        );
+
         return `
-            <div class="car">
+            <div class="car-card" data-search="${searchKey}">
 
-                <div>
+                <div class="car-primary">
 
-                    <h3>
-                        ${escapeHtml(car.brand)} ${escapeHtml(car.model)}
-                    </h3>
+                    <div class="car-title">
+                        🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}
+                    </div>
 
-                    <p>
+                    <div class="car-reg">
                         🔢 ${escapeHtml(car.registration) || at(lang, "registration_missing")}
-                    </p>
+                    </div>
 
-                    <p>
-                        👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
-                    </p>
-
-                    ${car.customers ? `
-                        <p>
-                            📱 ${car.customers.phone
-                                ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
-                                : at(lang, "phone_missing")}
-                        </p>
-                    ` : ""}
-
-                    <p>
+                    <div class="status-badge" style="${statusBadgeStyle(car.status)}">
                         ${statusLabel(lang, car.status)}
-                    </p>
+                    </div>
 
                 </div>
 
+                <div class="car-customer">
 
-                <div class="actions">
+                    <div class="car-meta">
+                        👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
+                    </div>
 
-                    <form method="POST" action="/admin/status">
+                    ${car.customers ? `
+                        <div class="car-meta">
+                            📱 ${car.customers.phone
+                                ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
+                                : at(lang, "phone_missing")}
+                        </div>
+                    ` : ""}
 
-                        <input
-                            type="hidden"
-                            name="car_id"
-                            value="${car.id}"
-                        />
+                </div>
 
-                        <select name="status">
+                <form class="status-form" method="POST" action="/admin/status">
 
-                            ${STATUS_KEYS
-                                .map(value => `
-                                    <option
-                                        value="${value}"
-                                        ${car.status === value ? "selected" : ""}
-                                    >
-                                        ${statusLabel(lang, value)}
-                                    </option>
-                                `)
-                                .join("")}
+                    <input type="hidden" name="car_id" value="${car.id}" />
 
-                        </select>
+                    <select name="status">
 
-                        <button>
-                            ${at(lang, "change_status_button")}
-                        </button>
+                        ${STATUS_KEYS
+                            .map(value => `
+                                <option
+                                    value="${value}"
+                                    ${car.status === value ? "selected" : ""}
+                                >
+                                    ${statusLabel(lang, value)}
+                                </option>
+                            `)
+                            .join("")}
 
-                    </form>
+                    </select>
 
+                    <button class="btn btn-outline">
+                        ${at(lang, "change_status_button")}
+                    </button>
 
-                    <a
-                        href="/admin/car/${car.id}"
-                        class="qr"
-                    >
+                </form>
+
+                <div class="actions-row">
+
+                    <a href="/admin/car/${car.id}" class="btn btn-outline">
                         ${at(lang, "qr_button")}
                     </a>
 
-                    <a
-                        href="/admin/car/${car.id}/delete"
-                        class="qr delete-link"
-                    >
+                    <a href="/admin/car/${car.id}/delete" class="btn btn-danger">
                         ${at(lang, "delete_car_button")}
                     </a>
 
@@ -559,157 +508,20 @@ router.get("/", requireLogin, async (req, res) => {
 
             <title>${at(lang, "dashboard_title")}</title>
 
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            ${HEAD_META}
 
-            <style>
-
-                * {
-                    box-sizing: border-box;
-                }
-
-                body {
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    background: #f4f6f8;
-                }
-
-                header {
-                    background: #111827;
-                    color: white;
-                    padding: 20px;
-
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    gap: 15px;
-                    flex-wrap: wrap;
-                }
-
-                header h1 {
-                    margin: 0;
-                }
-
-                .header-right {
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                }
-
-                .lang-switcher select {
-                    padding: 8px;
-                    border-radius: 6px;
-                    border: none;
-                }
-
-                .logout-link {
-                    color: white;
-                    text-decoration: none;
-                    background: rgba(255,255,255,0.15);
-                    padding: 8px 14px;
-                    border-radius: 6px;
-                }
-
-                .container {
-                    max-width: 1000px;
-                    margin: auto;
-                    padding: 25px;
-                }
-
-                .top {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 25px;
-                }
-
-                .add {
-                    background: #111827;
-                    color: white;
-                    text-decoration: none;
-                    padding: 12px 18px;
-                    border-radius: 8px;
-                }
-
-                .car {
-                    background: white;
-                    border-radius: 12px;
-                    padding: 20px;
-                    margin-bottom: 15px;
-
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-
-                    box-shadow: 0 3px 12px rgba(0,0,0,0.05);
-                }
-
-                .car h3 {
-                    margin-top: 0;
-                }
-
-                select {
-                    padding: 10px;
-                }
-
-                button {
-                    padding: 10px;
-                    cursor: pointer;
-                }
-
-                .qr {
-                    display: inline-block;
-                    margin-top: 10px;
-                    padding: 10px;
-                    background: #e5e7eb;
-                    text-decoration: none;
-                    color: black;
-                    border-radius: 7px;
-                }
-
-                .qr.delete-link {
-                    background: #fee2e2;
-                    color: #991b1b;
-                    margin-left: 8px;
-                }
-
-                .notice-banner {
-                    max-width: 1000px;
-                    margin: 15px auto 0;
-                    padding: 12px 16px;
-                    border-radius: 8px;
-                    font-size: 14px;
-                }
-
-                .notice-banner.success {
-                    background: #dcfce7;
-                    color: #166534;
-                }
-
-                @media(max-width:700px) {
-
-                    .car {
-                        flex-direction: column;
-                        align-items: flex-start;
-                    }
-
-                    .actions {
-                        margin-top: 15px;
-                    }
-
-                }
-
-            </style>
+            <style>${BASE_STYLES}</style>
 
         </head>
 
 
         <body>
 
-            <header>
+            <header class="app-header">
 
-                <div>
-                    <h1>🚗 ${escapeHtml(companyName)}</h1>
-                    <p>${at(lang, "app_tagline")}</p>
+                <div class="brand">
+                    🚗 ${escapeHtml(companyName)}
+                    <span class="tagline">${at(lang, "app_tagline")}</span>
                 </div>
 
                 <div class="header-right">
@@ -719,25 +531,39 @@ router.get("/", requireLogin, async (req, res) => {
 
             </header>
 
-            ${req.query.deleted ? `<div class="notice-banner success">${at(lang, "delete_success_notice")}</div>` : ""}
-
             <div class="container">
 
-                <div class="top">
+                ${req.query.deleted ? `<div class="notice-banner success">${at(lang, "delete_success_notice")}</div>` : ""}
+
+                <div class="top-row">
 
                     <h2>${at(lang, "nav_cars_heading")}</h2>
 
-                    <a
-                        class="add"
-                        href="/admin/add-car"
-                    >
+                    <a class="btn btn-primary" href="/admin/add-car">
                         ${at(lang, "nav_add_car")}
                     </a>
 
                 </div>
 
+                ${cars.length > 0 ? `
+                    <div class="search-box">
+                        <input
+                            type="search"
+                            id="carSearch"
+                            placeholder="${at(lang, "search_placeholder")}"
+                            oninput="
+                                var q = this.value.toLowerCase();
+                                document.querySelectorAll('.car-card').forEach(function (el) {
+                                    el.style.display = el.dataset.search.indexOf(q) === -1 ? 'none' : '';
+                                });
+                            "
+                        />
+                    </div>
+                ` : ""}
 
-                ${carCards || `<p>${at(lang, "no_cars_yet")}</p>`}
+                <div id="carList">
+                    ${carCards || `<p>${at(lang, "no_cars_yet")}</p>`}
+                </div>
 
             </div>
 
@@ -785,142 +611,114 @@ router.get("/add-car", requireLogin, async (req, res) => {
 
             <title>${at(lang, "add_car_page_title")}</title>
 
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            ${HEAD_META}
 
-            <style>
-
-                body {
-                    font-family: Arial;
-                    background: #f4f6f8;
-                    padding: 30px;
-                }
-
-                .box {
-                    max-width: 600px;
-                    margin: auto;
-                    background: white;
-                    padding: 30px;
-                    border-radius: 15px;
-                }
-
-                .top-bar {
-                    max-width: 600px;
-                    margin: 0 auto 15px;
-                    display: flex;
-                    justify-content: flex-end;
-                }
-
-                input, select, textarea {
-                    width: 100%;
-                    padding: 12px;
-                    margin: 8px 0 18px;
-                }
-
-                button {
-                    padding: 14px;
-                    width: 100%;
-                    background: #111827;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                }
-
-            </style>
+            <style>${BASE_STYLES}</style>
 
         </head>
 
 
         <body>
 
-            <div class="top-bar">
-                ${renderLanguageSwitcher(lang, "/admin/add-car")}
-            </div>
+            <header class="app-header">
 
-            <div class="box">
+                <div class="brand">🚗 AutoCore</div>
 
-                <h1>${at(lang, "add_car_title")}</h1>
+                <div class="header-right">
+                    ${renderLanguageSwitcher(lang, "/admin/add-car")}
+                </div>
 
+            </header>
 
-                <form method="POST" action="/admin/add-car">
+            <div class="container" style="max-width:600px;">
 
-                    <label>${at(lang, "label_customer")}</label>
+                <div class="card">
 
-                    <select name="customer_id">
+                    <h1>${at(lang, "add_car_title")}</h1>
 
-                        <option value="">
-                            ${at(lang, "select_customer_placeholder")}
-                        </option>
+                    <form method="POST" action="/admin/add-car">
 
-                        ${customerOptions}
+                        <label>${at(lang, "label_customer")}</label>
 
-                    </select>
+                        <select name="customer_id">
 
+                            <option value="">
+                                ${at(lang, "select_customer_placeholder")}
+                            </option>
 
-                    <p style="color:#6b7280;font-size:14px;margin:0 0 8px;">
-                        ${at(lang, "new_customer_heading")}
-                    </p>
+                            ${customerOptions}
 
-                    <label>${at(lang, "label_new_customer_name")}</label>
-
-                    <input
-                        name="new_customer_name"
-                    />
-
-                    <label>${at(lang, "label_new_customer_phone")}</label>
-
-                    <input
-                        name="new_customer_phone"
-                        placeholder="+48 123 456 789"
-                    />
+                        </select>
 
 
-                    <label>${at(lang, "label_brand")}</label>
+                        <p style="color:#6b7280;font-size:13px;margin:16px 0 4px;">
+                            ${at(lang, "new_customer_heading")}
+                        </p>
 
-                    <input
-                        name="brand"
-                        placeholder="BMW"
-                        required
-                    />
+                        <label>${at(lang, "label_new_customer_name")}</label>
 
+                        <input
+                            name="new_customer_name"
+                        />
 
-                    <label>${at(lang, "label_model")}</label>
+                        <label>${at(lang, "label_new_customer_phone")}</label>
 
-                    <input
-                        name="model"
-                        placeholder="320"
-                        required
-                    />
-
-
-                    <label>${at(lang, "label_registration")}</label>
-
-                    <input
-                        name="registration"
-                        placeholder="EL 12345"
-                    />
+                        <input
+                            name="new_customer_phone"
+                            type="tel"
+                            placeholder="+48 123 456 789"
+                        />
 
 
-                    <label>${at(lang, "label_vin")}</label>
+                        <label>${at(lang, "label_brand")}</label>
 
-                    <input
-                        name="vin"
-                        placeholder="VIN"
-                    />
-
-
-                    <label>${at(lang, "label_problem")}</label>
-
-                    <textarea
-                        name="problem"
-                        placeholder="${at(lang, "placeholder_problem")}"
-                    ></textarea>
+                        <input
+                            name="brand"
+                            placeholder="BMW"
+                            required
+                        />
 
 
-                    <button>
-                        ${at(lang, "create_car_button")}
-                    </button>
+                        <label>${at(lang, "label_model")}</label>
 
-                </form>
+                        <input
+                            name="model"
+                            placeholder="320"
+                            required
+                        />
+
+
+                        <label>${at(lang, "label_registration")}</label>
+
+                        <input
+                            name="registration"
+                            placeholder="EL 12345"
+                        />
+
+
+                        <label>${at(lang, "label_vin")}</label>
+
+                        <input
+                            name="vin"
+                            placeholder="VIN"
+                        />
+
+
+                        <label>${at(lang, "label_problem")}</label>
+
+                        <textarea
+                            name="problem"
+                            placeholder="${at(lang, "placeholder_problem")}"
+                        ></textarea>
+
+
+                        <button class="btn btn-primary btn-block" style="margin-top:16px;">
+                            ${at(lang, "create_car_button")}
+                        </button>
+
+                    </form>
+
+                </div>
 
             </div>
 
@@ -1069,47 +867,13 @@ router.get("/car/:id", requireLogin, async (req, res) => {
 
             <title>${escapeHtml(car.brand)} ${escapeHtml(car.model)}</title>
 
+            ${HEAD_META}
+
             <style>
-
-                body {
-                    font-family: Arial;
-                    text-align: center;
-                    background: #f4f6f8;
-                    padding: 40px;
-                    position: relative;
-                }
-
-                .top-bar {
-                    max-width: 500px;
-                    margin: 0 auto 15px;
-                    display: flex;
-                    justify-content: flex-end;
-                }
-
-                .box {
-                    background: white;
-                    max-width: 500px;
-                    margin: auto;
-                    padding: 30px;
-                    border-radius: 15px;
-                }
-
-                img {
-                    width: 300px;
-                    max-width: 100%;
-                }
-
-                .link {
-                    word-break: break-all;
-                    background: #eee;
-                    padding: 10px;
-                }
-
-                button {
-                    padding: 12px 20px;
-                    cursor: pointer;
-                }
-
+                ${BASE_STYLES}
+                .qr-img { width: 260px; max-width: 100%; display: block; margin: 12px auto; }
+                .telegram-link { word-break: break-all; background: #f3f4f6; padding: 10px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 16px; }
+                .section-divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
             </style>
 
         </head>
@@ -1117,58 +881,92 @@ router.get("/car/:id", requireLogin, async (req, res) => {
 
         <body>
 
-            <div class="top-bar">
-                ${renderLanguageSwitcher(lang, `/admin/car/${car.id}`)}
-            </div>
+            <header class="app-header">
+                <div class="brand">🚗 AutoCore</div>
+                <div class="header-right">
+                    ${renderLanguageSwitcher(lang, `/admin/car/${car.id}`)}
+                </div>
+            </header>
 
-            <div class="box">
+            <div class="container" style="max-width:560px;">
 
-                <h1>🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}</h1>
+                <div class="card">
 
-                <p>
-                    🔢 ${escapeHtml(car.registration)}
-                </p>
+                    <h1>🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}</h1>
 
-                <p>
-                    👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
-                </p>
+                    <p class="car-reg">🔢 ${escapeHtml(car.registration) || at(lang, "registration_missing")}</p>
 
-                ${car.customers ? `
-                    <p>
-                        📱 ${car.customers.phone
-                            ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
-                            : at(lang, "phone_missing")}
-                        &nbsp;
-                        <a href="/admin/customer/${car.customers.id}/edit">${at(lang, "edit_customer_link")}</a>
+                    <div class="status-badge" style="${statusBadgeStyle(car.status)}">
+                        ${statusLabel(lang, car.status)}
+                    </div>
+
+                    <div style="margin:16px 0;">
+
+                        <div class="car-meta">
+                            👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
+                        </div>
+
+                        ${car.customers ? `
+                            <div class="car-meta">
+                                📱 ${car.customers.phone
+                                    ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
+                                    : at(lang, "phone_missing")}
+                                &nbsp;·&nbsp;
+                                <a href="/admin/customer/${car.customers.id}/edit">${at(lang, "edit_customer_link")}</a>
+                            </div>
+                        ` : ""}
+
+                    </div>
+
+                    <form class="status-form" method="POST" action="/admin/status">
+
+                        <input type="hidden" name="car_id" value="${car.id}" />
+
+                        <select name="status">
+                            ${STATUS_KEYS
+                                .map(value => `
+                                    <option value="${value}" ${car.status === value ? "selected" : ""}>
+                                        ${statusLabel(lang, value)}
+                                    </option>
+                                `)
+                                .join("")}
+                        </select>
+
+                        <button class="btn btn-primary">
+                            ${at(lang, "change_status_button")}
+                        </button>
+
+                    </form>
+
+                    <div class="actions-row">
+                        <a href="/admin/car/${car.id}/delete" class="btn btn-danger btn-block">
+                            ${at(lang, "delete_car_button")}
+                        </a>
+                    </div>
+
+                    <hr class="section-divider" />
+
+                    <h2>${at(lang, "qr_heading")}</h2>
+
+                    <img class="qr-img" src="${qr}" />
+
+                    <p style="text-align:center;color:var(--text-muted);font-size:14px;">
+                        ${at(lang, "qr_instructions")}
                     </p>
-                ` : ""}
 
+                    <p class="telegram-link">
+                        ${telegramLink}
+                    </p>
 
-                <h2>${at(lang, "qr_heading")}</h2>
+                    <button onclick="window.print()" class="btn btn-outline btn-block">
+                        ${at(lang, "qr_print_button")}
+                    </button>
 
-                <img src="${qr}" />
+                    <a href="/admin" class="btn btn-outline btn-block" style="margin-top:10px;">
+                        ${at(lang, "back_to_admin")}
+                    </a>
 
-
-                <p>
-                    ${at(lang, "qr_instructions")}
-                </p>
-
-
-                <p class="link">
-                    ${telegramLink}
-                </p>
-
-
-                <button onclick="window.print()">
-                    ${at(lang, "qr_print_button")}
-                </button>
-
-
-                <br><br>
-
-                <a href="/admin">
-                    ${at(lang, "back_to_admin")}
-                </a>
+                </div>
 
             </div>
 
@@ -1217,77 +1015,55 @@ router.get("/customer/:id/edit", requireLogin, async (req, res) => {
 
             <title>${at(lang, "edit_customer_title")}</title>
 
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            ${HEAD_META}
 
-            <style>
-
-                body {
-                    font-family: Arial;
-                    background: #f4f6f8;
-                    padding: 30px;
-                }
-
-                .box {
-                    max-width: 600px;
-                    margin: auto;
-                    background: white;
-                    padding: 30px;
-                    border-radius: 15px;
-                }
-
-                input {
-                    width: 100%;
-                    padding: 12px;
-                    margin: 8px 0 18px;
-                }
-
-                button {
-                    padding: 14px;
-                    width: 100%;
-                    background: #111827;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                }
-
-            </style>
+            <style>${BASE_STYLES}</style>
 
         </head>
 
 
         <body>
 
-            <div class="box">
+            <header class="app-header">
+                <div class="brand">🚗 AutoCore</div>
+            </header>
 
-                <h1>${at(lang, "edit_customer_title")}</h1>
+            <div class="container" style="max-width:500px;">
 
-                <form method="POST" action="/admin/customer/${customer.id}/edit">
+                <div class="card">
 
-                    <label>${at(lang, "label_customer")}</label>
+                    <h1>${at(lang, "edit_customer_title")}</h1>
 
-                    <input
-                        name="name"
-                        value="${escapeHtml(customer.name)}"
-                        required
-                    />
+                    <form method="POST" action="/admin/customer/${customer.id}/edit">
 
-                    <label>${at(lang, "label_phone")}</label>
+                        <label>${at(lang, "label_customer")}</label>
 
-                    <input
-                        name="phone"
-                        value="${escapeHtml(customer.phone)}"
-                        placeholder="+48 123 456 789"
-                    />
+                        <input
+                            name="name"
+                            value="${escapeHtml(customer.name)}"
+                            required
+                        />
 
-                    <button>
-                        ${at(lang, "save_button")}
-                    </button>
+                        <label>${at(lang, "label_phone")}</label>
 
-                </form>
+                        <input
+                            name="phone"
+                            type="tel"
+                            value="${escapeHtml(customer.phone)}"
+                            placeholder="+48 123 456 789"
+                        />
 
-                <br>
+                        <button class="btn btn-primary btn-block" style="margin-top:8px;">
+                            ${at(lang, "save_button")}
+                        </button>
 
-                <a href="/admin">${at(lang, "back_to_admin")}</a>
+                    </form>
+
+                    <a href="/admin" class="btn btn-outline btn-block" style="margin-top:12px;">
+                        ${at(lang, "back_to_admin")}
+                    </a>
+
+                </div>
 
             </div>
 
@@ -1360,32 +1136,33 @@ router.get("/car/:id/delete", requireLogin, async (req, res) => {
         <html>
         <head>
             <title>${at(lang, "delete_confirm_title")}</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            ${HEAD_META}
             <style>
-                body { font-family: Arial, sans-serif; background: #f4f6f8; padding: 40px 20px; }
-                .box { max-width: 440px; margin: auto; background: white; padding: 30px; border-radius: 15px; text-align: center; }
-                h1 { color: #991b1b; font-size: 20px; margin-top: 0; }
-                p { color: #374151; }
+                ${BASE_STYLES}
+                .delete-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+                .delete-box { width: 100%; max-width: 440px; text-align: center; }
+                .delete-box h1 { color: #991b1b; font-size: 20px; }
+                .delete-box p { color: #374151; }
                 .car-name { font-weight: bold; font-size: 17px; margin: 10px 0 20px; }
-                .actions { display: flex; gap: 10px; margin-top: 20px; }
-                button, a.btn { flex: 1; padding: 13px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; text-decoration: none; text-align: center; font-family: inherit; }
-                .btn-delete { background: #dc2626; color: white; width: 100%; }
-                .btn-cancel { background: #e5e7eb; color: #111827; }
+                .delete-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+                .delete-actions form { margin: 0; }
             </style>
         </head>
         <body>
-            <div class="box">
-                <h1>${at(lang, "delete_confirm_title")}</h1>
-                <div class="car-name">
-                    🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}
-                    ${car.registration ? `(${escapeHtml(car.registration)})` : ""}
-                </div>
-                <p>${at(lang, "delete_confirm_warning")}</p>
-                <div class="actions">
-                    <a class="btn btn-cancel" href="/admin">${at(lang, "btn_delete_cancel")}</a>
-                    <form method="POST" action="/admin/car/${car.id}/delete" style="flex:1; margin:0;">
-                        <button type="submit" class="btn-delete">${at(lang, "btn_delete_confirm")}</button>
-                    </form>
+            <div class="delete-wrap">
+                <div class="card delete-box">
+                    <h1>${at(lang, "delete_confirm_title")}</h1>
+                    <div class="car-name">
+                        🚗 ${escapeHtml(car.brand)} ${escapeHtml(car.model)}
+                        ${car.registration ? `(${escapeHtml(car.registration)})` : ""}
+                    </div>
+                    <p>${at(lang, "delete_confirm_warning")}</p>
+                    <div class="delete-actions">
+                        <form method="POST" action="/admin/car/${car.id}/delete">
+                            <button type="submit" class="btn btn-danger btn-block">${at(lang, "btn_delete_confirm")}</button>
+                        </form>
+                        <a class="btn btn-outline btn-block" href="/admin">${at(lang, "btn_delete_cancel")}</a>
+                    </div>
                 </div>
             </div>
         </body>

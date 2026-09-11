@@ -73,10 +73,14 @@ if (WORKSHOP_BOT_TOKEN) {
 
     // copyMessage() only ever returns { message_id } — never the actual
     // content — so whatever the later "Send to customer" step needs must
-    // be captured here, from the original replied-to message, at /save
-    // time. There is no Bot API call to fetch an arbitrary message by id
-    // later on.
-    function extractMediaInfo(message) {
+    // be captured here, from the original reply source, at /save time.
+    // There is no Bot API call to fetch an arbitrary message by id later
+    // on. `message` is either a full reply_to_message or an external_reply
+    // — both expose photo/video/document in the same shape, but only
+    // reply_to_message carries .caption/.text; external_reply carries
+    // neither, so `quoteText` (ctx.message.quote?.text, when present) is
+    // the best-effort fallback for a plain text original in that case.
+    function extractMediaInfo(message, quoteText) {
 
         if (message.photo && message.photo.length > 0) {
 
@@ -119,6 +123,21 @@ if (WORKSHOP_BOT_TOKEN) {
                 workshop_file_id: null,
                 caption: null,
                 text_content: message.text
+            };
+        }
+
+        // No photo/video/document/text on `message` itself — this is the
+        // external_reply case for a plain text original (it never carries
+        // its own .text). quote.text is the quoted excerpt Telegram does
+        // provide for such a reply; not guaranteed to be the message's
+        // full text, but the closest available substitute.
+        if (quoteText) {
+
+            return {
+                media_type: "text",
+                workshop_file_id: null,
+                caption: null,
+                text_content: quoteText
             };
         }
 
@@ -204,19 +223,24 @@ if (WORKSHOP_BOT_TOKEN) {
 
         const groupId = ctx.chat.id;
 
-        // TEMPORARY DIAGNOSTIC — investigating reply_to_message coming
-        // back empty on genuine replies. Structural booleans/ids only,
-        // never message content or secrets. Remove after root cause is
-        // confirmed.
-        console.log("save-debug:", {
-            has_reply_to_message: !!ctx.message.reply_to_message,
-            has_external_reply: !!ctx.message.external_reply,
-            has_quote: !!ctx.message.quote,
-            media_group_id: ctx.message.media_group_id ?? null,
-            reply_to_message_media_group_id: ctx.message.reply_to_message?.media_group_id ?? null
-        });
+        // Telegram represents "this message replies to X" in one of two
+        // ways. The classic `reply_to_message` (a full Message) is only
+        // populated when the original message was itself already visible
+        // to the bot. Under Privacy Mode — the default for every Telegram
+        // bot — a plain photo with no caption/command/mention is never
+        // delivered to the bot as its own update, so a LATER command
+        // replying to it arrives with `external_reply` instead: a lighter
+        // structure that still carries the actual photo/video/document,
+        // just not under the same field name. Confirmed against a real
+        // production /save reply that Telegram's own FAQ describes this
+        // exact behavior, and verified `external_reply` exposes
+        // photo/video/document in the same shape extractMediaInfo already
+        // expects (it does not carry a caption or plain text, though —
+        // see extractMediaInfo's quoteText fallback for that case).
+        const replyToMessage = ctx.message.reply_to_message;
+        const externalReply = ctx.message.external_reply;
+        const replied = replyToMessage || externalReply || null;
 
-        const replied = ctx.message.reply_to_message;
         const registrationInput = (ctx.match || "").trim();
 
         const replyOptions = { reply_to_message_id: ctx.message.message_id };
@@ -226,6 +250,23 @@ if (WORKSHOP_BOT_TOKEN) {
 
             await ctx.reply(
                 "⚠️ Reply to the photo, video, or message you want to save, then send /save <registration>.\n\nExample: /save EL12345",
+                replyOptions
+            );
+
+            return;
+        }
+
+
+        // message_id is always present on reply_to_message, but on
+        // external_reply it's only guaranteed when the original chat is a
+        // supergroup/channel — true for every group this bot is
+        // configured for, but checked explicitly rather than assumed.
+        const sourceMessageId = replyToMessage ? replyToMessage.message_id : externalReply.message_id;
+
+        if (!sourceMessageId) {
+
+            await ctx.reply(
+                "⚠️ Could not identify the message you replied to. Please try again.",
                 replyOptions
             );
 
@@ -284,7 +325,7 @@ if (WORKSHOP_BOT_TOKEN) {
             .from("saved_media")
             .select("id, saved_at")
             .eq("source_chat_id", groupId)
-            .eq("source_message_id", replied.message_id)
+            .eq("source_message_id", sourceMessageId)
             .maybeSingle();
 
         if (existing) {
@@ -339,7 +380,7 @@ if (WORKSHOP_BOT_TOKEN) {
             copiedMessage = await ctx.api.copyMessage(
                 groupConfig.manager_group_id,
                 groupId,
-                replied.message_id
+                sourceMessageId
             );
 
         } catch (copyError) {
@@ -357,9 +398,12 @@ if (WORKSHOP_BOT_TOKEN) {
 
         const savedByName = displayName(ctx.from);
 
-        // Captured from the ORIGINAL message (not copiedMessage, which is
-        // only ever { message_id } — see extractMediaInfo's comment).
-        const mediaInfo = extractMediaInfo(replied);
+        // Captured from the ORIGINAL reply source (not copiedMessage,
+        // which is only ever { message_id } — see extractMediaInfo's
+        // comment). ctx.message.quote?.text is the best-effort fallback
+        // for plain text when the source came via external_reply, which
+        // never carries a .text field of its own.
+        const mediaInfo = extractMediaInfo(replied, ctx.message.quote?.text);
 
 
         const { data: savedRow, error: insertError } = await supabase
@@ -368,7 +412,7 @@ if (WORKSHOP_BOT_TOKEN) {
                 company_id: groupConfig.company_id,
                 vehicle_id: vehicle.id,
                 source_chat_id: groupId,
-                source_message_id: replied.message_id,
+                source_message_id: sourceMessageId,
                 manager_chat_id: groupConfig.manager_group_id,
                 manager_message_id: copiedMessage.message_id,
                 saved_by_telegram_user_id: ctx.from.id,

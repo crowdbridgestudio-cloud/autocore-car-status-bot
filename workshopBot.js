@@ -20,12 +20,14 @@
 // here. If WORKSHOP_BOT_TOKEN isn't set, this module simply does
 // nothing when started (the feature is off by default).
 
-const { Bot, InlineKeyboard } = require("grammy");
+const { Bot, InlineKeyboard, InputFile } = require("grammy");
 const supabase = require("./supabase");
 
 const WORKSHOP_BOT_TOKEN = process.env.WORKSHOP_BOT_TOKEN;
 
 let workshopBot = null;
+
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // Telegram Bot API's own file-download ceiling
 
 
 if (WORKSHOP_BOT_TOKEN) {
@@ -44,6 +46,21 @@ if (WORKSHOP_BOT_TOKEN) {
     });
 
 
+    // A second Bot object, built from the MAIN customer bot's token, used
+    // ONLY for outbound API calls (customerBot.api.*) — mirrors the exact
+    // pattern already used successfully in admin.js's `notificationBot`.
+    // This is what lets the Workshop Bot actually reach a customer:
+    // customers only ever start a conversation with the main bot, never
+    // this one, so Telegram would refuse any message sent as the
+    // Workshop Bot directly to a customer chat.
+    //
+    // Deliberately NEVER call .start(), .stop(), or .catch() on this
+    // instance — doing so would start a second, competing polling loop
+    // for BOT_TOKEN, which is exactly the bug that was just fixed in
+    // index.js. This object exists purely to make outbound API calls.
+    const customerBot = new Bot(process.env.BOT_TOKEN);
+
+
     function displayName(from) {
 
         return (
@@ -52,6 +69,158 @@ if (WORKSHOP_BOT_TOKEN) {
             `User ${from.id}`
         );
     }
+
+
+    // copyMessage() only ever returns { message_id } — never the actual
+    // content — so whatever the later "Send to customer" step needs must
+    // be captured here, from the original replied-to message, at /save
+    // time. There is no Bot API call to fetch an arbitrary message by id
+    // later on.
+    function extractMediaInfo(message) {
+
+        if (message.photo && message.photo.length > 0) {
+
+            // Telegram sends multiple resolutions; the last entry is the
+            // largest/best available.
+            const best = message.photo[message.photo.length - 1];
+
+            return {
+                media_type: "photo",
+                workshop_file_id: best.file_id,
+                caption: message.caption || null,
+                text_content: null
+            };
+        }
+
+        if (message.video) {
+
+            return {
+                media_type: "video",
+                workshop_file_id: message.video.file_id,
+                caption: message.caption || null,
+                text_content: null
+            };
+        }
+
+        if (message.document) {
+
+            return {
+                media_type: "document",
+                workshop_file_id: message.document.file_id,
+                caption: message.caption || null,
+                text_content: null
+            };
+        }
+
+        if (message.text) {
+
+            return {
+                media_type: "text",
+                workshop_file_id: null,
+                caption: null,
+                text_content: message.text
+            };
+        }
+
+        // Some other message type (voice, sticker, audio, ...) — still
+        // copied into the manager group for humans to see, but /save
+        // doesn't know how to relay it to a customer via the button.
+        return {
+            media_type: null,
+            workshop_file_id: null,
+            caption: message.caption || null,
+            text_content: null
+        };
+    }
+
+
+    // Performs the actual cross-bot relay: downloads the file bytes via
+    // the Workshop Bot (which owns workshop_file_id) and re-uploads them
+    // fresh through the main customer bot. Never uses copyMessage here —
+    // the main bot isn't a member of the manager group (so it has no
+    // "from_chat_id" to copy from), and a Workshop Bot file_id is never
+    // valid when handed to a different bot's API in the first place.
+    async function relayToCustomer(row, customerTelegramId) {
+
+        if (row.media_type === "text") {
+
+            if (!row.text_content) {
+                throw new Error("No text content was stored for this saved item.");
+            }
+
+            await customerBot.api.sendMessage(customerTelegramId, row.text_content);
+            return;
+        }
+
+        if (!row.media_type || !row.workshop_file_id) {
+            throw new Error(`This saved item's content type ("${row.media_type || "unknown"}") can't be sent to a customer yet.`);
+        }
+
+        // Ask the Workshop Bot (the only bot that can) where this file lives.
+        const file = await workshopBot.api.getFile(row.workshop_file_id);
+
+        if (file.file_size && file.file_size > MAX_DOWNLOAD_BYTES) {
+            const tooLarge = new Error("File exceeds the 20MB bot download limit.");
+            tooLarge.code = "FILE_TOO_LARGE";
+            throw tooLarge;
+        }
+
+        const fileUrl = `https://api.telegram.org/file/bot${WORKSHOP_BOT_TOKEN}/${file.file_path}`;
+
+        const response = await fetch(fileUrl);
+
+        if (!response.ok) {
+            throw new Error(`Failed to download file from Telegram (HTTP ${response.status}).`);
+        }
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        if (buffer.length > MAX_DOWNLOAD_BYTES) {
+            const tooLarge = new Error("Downloaded file exceeds the 20MB bot download limit.");
+            tooLarge.code = "FILE_TOO_LARGE";
+            throw tooLarge;
+        }
+
+        const inputFile = new InputFile(buffer);
+        const sendOptions = row.caption ? { caption: row.caption } : undefined;
+
+        if (row.media_type === "photo") {
+            await customerBot.api.sendPhoto(customerTelegramId, inputFile, sendOptions);
+        } else if (row.media_type === "video") {
+            await customerBot.api.sendVideo(customerTelegramId, inputFile, sendOptions);
+        } else if (row.media_type === "document") {
+            await customerBot.api.sendDocument(customerTelegramId, inputFile, sendOptions);
+        } else {
+            throw new Error(`Unsupported media_type "${row.media_type}".`);
+        }
+    }
+
+
+    // ==================================================
+    // TEMPORARY: /chatid — diagnostic only, to collect the numeric
+    // chat ids needed for workshop_telegram_groups rows. Group/supergroup
+    // only (no point in a private chat with the bot), replies with the
+    // chat's own public info only — never a token or any other secret.
+    // Remove once the workshop + manager group ids have been collected.
+    // ==================================================
+
+    workshopBot.command("chatid", async (ctx) => {
+
+        const chatType = ctx.chat.type;
+
+        if (chatType !== "group" && chatType !== "supergroup") {
+
+            await ctx.reply("⚠️ /chatid only works in group chats.");
+
+            return;
+        }
+
+        await ctx.reply(
+            `Chat ID: ${ctx.chat.id}\n` +
+            `Title: ${ctx.chat.title}\n` +
+            `Type: ${chatType}`
+        );
+    });
 
 
     // ==================================================
@@ -202,6 +371,10 @@ if (WORKSHOP_BOT_TOKEN) {
 
         const savedByName = displayName(ctx.from);
 
+        // Captured from the ORIGINAL message (not copiedMessage, which is
+        // only ever { message_id } — see extractMediaInfo's comment).
+        const mediaInfo = extractMediaInfo(replied);
+
 
         const { data: savedRow, error: insertError } = await supabase
             .from("saved_media")
@@ -213,7 +386,11 @@ if (WORKSHOP_BOT_TOKEN) {
                 manager_chat_id: groupConfig.manager_group_id,
                 manager_message_id: copiedMessage.message_id,
                 saved_by_telegram_user_id: ctx.from.id,
-                saved_by_name: savedByName
+                saved_by_name: savedByName,
+                media_type: mediaInfo.media_type,
+                workshop_file_id: mediaInfo.workshop_file_id,
+                caption: mediaInfo.caption,
+                text_content: mediaInfo.text_content
             })
             .select()
             .single();
@@ -330,7 +507,7 @@ if (WORKSHOP_BOT_TOKEN) {
         if (customerError || !customer || !customer.telegram_id) {
 
             await ctx.answerCallbackQuery({
-                text: "❌ This customer isn't connected to Telegram yet.",
+                text: "❌ This customer hasn't started the main AutoCore bot yet, so they can't receive Telegram messages.",
                 show_alert: true
             });
 
@@ -340,21 +517,31 @@ if (WORKSHOP_BOT_TOKEN) {
 
         try {
 
-            await ctx.api.copyMessage(
-                customer.telegram_id,
-                row.manager_chat_id,
-                row.manager_message_id
-            );
+            // Always via the main customer bot, never copyMessage — see
+            // relayToCustomer's own comment for exactly why.
+            await relayToCustomer(row, customer.telegram_id);
 
         } catch (sendError) {
 
             console.error("Failed to send saved media to customer:", sendError.message);
 
+            let alertText = "❌ Could not send this to the customer. Please try again.";
+
+            if (sendError && sendError.code === "FILE_TOO_LARGE") {
+                alertText = "❌ This file is too large to forward (over 20MB). Please share it with the customer another way.";
+            } else if (sendError && sendError.error_code === 403) {
+                alertText = "❌ The customer has blocked the main AutoCore bot or hasn't started it — they can't receive Telegram messages right now.";
+            }
+
             await ctx.answerCallbackQuery({
-                text: "❌ Could not send to the customer. Please try again.",
+                text: alertText,
                 show_alert: true
             });
 
+            // Do NOT mark sent_to_customer / sent_at — the button stays
+            // available so a manager can retry once the underlying issue
+            // (file too large, customer needs to message the main bot,
+            // transient network error, ...) is resolved.
             return;
         }
 

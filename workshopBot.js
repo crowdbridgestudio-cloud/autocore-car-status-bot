@@ -203,6 +203,19 @@ if (WORKSHOP_BOT_TOKEN) {
     workshopBot.command("save", async (ctx) => {
 
         const groupId = ctx.chat.id;
+
+        // TEMPORARY DIAGNOSTIC — investigating reply_to_message coming
+        // back empty on genuine replies. Structural booleans/ids only,
+        // never message content or secrets. Remove after root cause is
+        // confirmed.
+        console.log("save-debug:", {
+            has_reply_to_message: !!ctx.message.reply_to_message,
+            has_external_reply: !!ctx.message.external_reply,
+            has_quote: !!ctx.message.quote,
+            media_group_id: ctx.message.media_group_id ?? null,
+            reply_to_message_media_group_id: ctx.message.reply_to_message?.media_group_id ?? null
+        });
+
         const replied = ctx.message.reply_to_message;
         const registrationInput = (ctx.match || "").trim();
 

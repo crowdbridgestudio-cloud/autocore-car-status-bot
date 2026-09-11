@@ -503,14 +503,51 @@ bot.command("start", async (ctx) => {
 
     if (!payload) {
 
+        // This bot is multi-tenant — a bare /start with no QR/deep-link
+        // payload has no way to know which workshop the user means, so it
+        // must never guess or default to any single company. The only
+        // company a bare /start can safely show is the one an ALREADY
+        // linked customer belongs to (via their own customers.company_id);
+        // everyone else gets a generic, tenant-neutral onboarding message
+        // that points them at their workshop's QR/deep link instead.
+        const telegramId = ctx.from.id;
+
+        const { data: customer, error: customerError } = await supabase
+            .from("customers")
+            .select("company_id")
+            .eq("telegram_id", telegramId)
+            .maybeSingle();
+
+
+        if (customerError || !customer) {
+
+            await ctx.reply(
+                t(lang, "onboarding_generic"),
+                {
+                    parse_mode: "Markdown"
+                }
+            );
+
+            return;
+        }
+
+
+        if (await isCompanyArchived(customer.company_id)) {
+
+            await ctx.reply(t(lang, "company_archived"));
+
+            return;
+        }
+
+
         const { data, error } = await supabase
             .from("companies")
             .select("*")
-            .eq("id", 1)
-            .single();
+            .eq("id", customer.company_id)
+            .maybeSingle();
 
 
-        if (error) {
+        if (error || !data) {
 
             console.error("Supabase error:", error);
 
@@ -680,6 +717,25 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
         .select("*")
         .eq("telegram_id", telegramId)
         .maybeSingle();
+
+
+    // A Telegram account's customer identity belongs to exactly one
+    // company (see getLang/showCustomerCars, which look a customer up by
+    // telegram_id alone with no company scoping). Reusing an existing
+    // customer row to connect a car from a DIFFERENT company would silently
+    // cross-link two tenants' data — the customer's own company_id would
+    // still point at their original workshop while a car from another
+    // workshop now carried their customer_id. Must be rejected before any
+    // of the car-linking checks below.
+    if (customer && customer.company_id !== targetCar.company_id) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "car_different_company"),
+            show_alert: true
+        });
+
+        return;
+    }
 
 
     // Car IDs are sequential and guessable — refuse to hand over a car

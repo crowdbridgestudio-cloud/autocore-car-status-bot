@@ -219,7 +219,9 @@ const STRINGS = {
         delete_success: "✅ Vehicle deleted.",
         delete_cancelled: "❌ Deletion cancelled.",
         delete_error: "❌ Could not delete the vehicle. Please try again.",
-        company_archived: "❌ This service is currently unavailable. Please contact the workshop directly."
+        company_archived: "❌ This service is currently unavailable. Please contact the workshop directly.",
+        onboarding_generic: "🤖 *AutoCore*\n\nWelcome! To see your vehicle's status, please scan the QR code or open the link provided by your workshop.",
+        car_different_company: "❌ Your Telegram account is already registered with a different workshop. Please contact support if you believe this is a mistake."
     },
 
     az: {
@@ -270,7 +272,9 @@ const STRINGS = {
         delete_success: "✅ Avtomobil silindi.",
         delete_cancelled: "❌ Silinmə ləğv edildi.",
         delete_error: "❌ Avtomobili silmək mümkün olmadı. Zəhmət olmasa yenidən cəhd edin.",
-        company_archived: "❌ Bu servis hazırda əlçatan deyil. Zəhmət olmasa birbaşa servislə əlaqə saxlayın."
+        company_archived: "❌ Bu servis hazırda əlçatan deyil. Zəhmət olmasa birbaşa servislə əlaqə saxlayın.",
+        onboarding_generic: "🤖 *AutoCore*\n\nXoş gəlmisiniz! Avtomobilinizin statusunu görmək üçün zəhmət olmasa servisinizin təqdim etdiyi QR kodu skan edin və ya linki açın.",
+        car_different_company: "❌ Telegram hesabınız artıq başqa bir servisə qeydiyyatdan keçib. Bunun səhv olduğunu düşünürsünüzsə, dəstək xidməti ilə əlaqə saxlayın."
     },
 
     tr: {
@@ -321,7 +325,9 @@ const STRINGS = {
         delete_success: "✅ Araç silindi.",
         delete_cancelled: "❌ Silme işlemi iptal edildi.",
         delete_error: "❌ Araç silinemedi. Lütfen tekrar deneyin.",
-        company_archived: "❌ Bu servis şu anda kullanılamıyor. Lütfen servisle doğrudan iletişime geçin."
+        company_archived: "❌ Bu servis şu anda kullanılamıyor. Lütfen servisle doğrudan iletişime geçin.",
+        onboarding_generic: "🤖 *AutoCore*\n\nHoş geldiniz! Aracınızın durumunu görmek için lütfen servisinizin verdiği QR kodu tarayın veya bağlantıyı açın.",
+        car_different_company: "❌ Telegram hesabınız zaten başka bir servise kayıtlı. Bunun bir hata olduğunu düşünüyorsanız lütfen destek ile iletişime geçin."
     },
 
     pl: {
@@ -372,7 +378,9 @@ const STRINGS = {
         delete_success: "✅ Pojazd usunięty.",
         delete_cancelled: "❌ Usuwanie anulowane.",
         delete_error: "❌ Nie udało się usunąć pojazdu. Spróbuj ponownie.",
-        company_archived: "❌ Ten serwis jest obecnie niedostępny. Skontaktuj się bezpośrednio z warsztatem."
+        company_archived: "❌ Ten serwis jest obecnie niedostępny. Skontaktuj się bezpośrednio z warsztatem.",
+        onboarding_generic: "🤖 *AutoCore*\n\nWitamy! Aby zobaczyć status swojego pojazdu, zeskanuj kod QR lub otwórz link otrzymany od swojego warsztatu.",
+        car_different_company: "❌ Twoje konto Telegram jest już zarejestrowane w innym warsztacie. Jeśli uważasz, że to pomyłka, skontaktuj się z pomocą techniczną."
     },
 
     ru: {
@@ -423,7 +431,9 @@ const STRINGS = {
         delete_success: "✅ Автомобиль удалён.",
         delete_cancelled: "❌ Удаление отменено.",
         delete_error: "❌ Не удалось удалить автомобиль. Попробуйте ещё раз.",
-        company_archived: "❌ Этот сервис временно недоступен. Пожалуйста, свяжитесь с сервисом напрямую."
+        company_archived: "❌ Этот сервис временно недоступен. Пожалуйста, свяжитесь с сервисом напрямую.",
+        onboarding_generic: "🤖 *AutoCore*\n\nДобро пожаловать! Чтобы увидеть статус вашего автомобиля, отсканируйте QR-код или откройте ссылку, предоставленную вашим сервисом.",
+        car_different_company: "❌ Ваш аккаунт Telegram уже зарегистрирован в другом сервисе. Если вы считаете, что это ошибка, свяжитесь с поддержкой."
     }
 };
 

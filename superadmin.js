@@ -768,7 +768,7 @@ router.get("/", requireSuperAdmin, async (req, res) => {
                 : isActive
                     ? `
                         <form class="inline" method="POST" action="/superadmin/companies/${company.id}/suspend"
-                              onsubmit="return confirm('Suspend ${escapeJsString(company.name)}? Their admin panel will stop working until reactivated.');">
+                              onsubmit="return confirm('Suspend ${escapeJsString(company.name)} (ID #${company.id})? Their admin panel will stop working until reactivated.');">
                             <button class="btn btn-red" type="submit">Suspend</button>
                         </form>
                     `
@@ -782,7 +782,7 @@ router.get("/", requireSuperAdmin, async (req, res) => {
                 ? ""
                 : `
                     <form class="inline" method="POST" action="/superadmin/companies/${company.id}/archive"
-                          onsubmit="return confirm('Archive ${escapeJsString(company.name)}? Their admin panel and customer bot access will stop working, but no data is deleted. You can restore it later.');">
+                          onsubmit="return confirm('Archive ${escapeJsString(company.name)} (ID #${company.id})? Their admin panel and customer bot access will stop working, but no data is deleted. You can restore it later.');">
                         <button class="btn btn-outline" type="submit">Archive</button>
                     </form>
                 `;
@@ -794,6 +794,7 @@ router.get("/", requireSuperAdmin, async (req, res) => {
             <tr>
                 <td>
                     <strong>${escapeHtml(company.name)}</strong>
+                    <div style="color:#9ca3af;font-size:12px;">ID #${company.id}</div>
                 </td>
                 <td>${escapeHtml(company.phone) || "-"}</td>
                 <td>${escapeHtml(company.address) || "-"}</td>

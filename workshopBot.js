@@ -339,10 +339,13 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
 
-        // Vehicle lookup — scoped to this group's company_id only.
+        // Vehicle lookup — scoped to this group's company_id only. The
+        // customer (name/phone/telegram_id) comes from THIS SAME
+        // company-scoped row via the join, never a separate lookup, so
+        // there's no way for it to resolve to another company's customer.
         const { data: vehicle, error: vehicleError } = await supabase
             .from("cars")
-            .select("*, customers ( id, name, telegram_id )")
+            .select("*, customers ( id, name, phone, telegram_id )")
             .eq("company_id", groupConfig.company_id)
             .ilike("registration", registrationInput)
             .maybeSingle();
@@ -442,10 +445,19 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
 
+        // Every field here comes from `vehicle.customers` — the same
+        // company-scoped row fetched above — never a fresh lookup, so a
+        // manager can never see another customer's (let alone another
+        // company's) phone or Telegram ID by any accident here.
+        const customerPhoneLine = vehicle.customers?.phone || "Not provided";
+        const customerTelegramLine = vehicle.customers?.telegram_id || "Not connected";
+
         const metadataText =
-            `🚗 *${vehicle.brand} ${vehicle.model}* (${vehicle.registration || registrationInput})\n` +
-            `👤 ${vehicle.customers?.name || "No customer on file"}\n` +
-            `👷 Saved by: ${savedByName}\n` +
+            `🚗 *${vehicle.brand} ${vehicle.model}* (${vehicle.registration || registrationInput})\n\n` +
+            `👤 Customer: ${vehicle.customers?.name || "No customer on file"}\n` +
+            `📱 Phone: ${customerPhoneLine}\n` +
+            `💬 Telegram ID: ${customerTelegramLine}\n\n` +
+            `💾 Saved by: ${savedByName}\n` +
             `🕐 ${new Date(savedRow.saved_at).toLocaleString()}`;
 
         try {

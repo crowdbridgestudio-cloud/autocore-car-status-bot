@@ -40,7 +40,7 @@ function instanceTag() {
 }
 
 
-const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
+const { Bot, InlineKeyboard, Keyboard, webhookCallback } = require("grammy");
 const supabase = require("./supabase");
 
 const express = require("express");
@@ -307,6 +307,28 @@ async function isCompanyArchived(companyId) {
 
 
 // ==================================================
+// PERSISTENT BOTTOM KEYBOARD
+// ==================================================
+// Two buttons, always visible under the text input: Status (re-opens the
+// existing car menu) and Language (re-opens the existing language picker).
+// Telegram only allows ONE reply_markup per message (either this
+// ReplyKeyboardMarkup or an InlineKeyboardMarkup, never both), so this
+// can't be attached to messages that already carry their own inline
+// keyboard (car cards, connect/cancel prompts) — but once sent on any
+// message it stays visible under the input box for every later message
+// in the chat regardless of what those carry, so it only needs to be set
+// at a few natural entry points (see callers).
+
+function mainReplyKeyboard(lang) {
+
+    return new Keyboard()
+        .text(t(lang, "menu_btn_status"))
+        .text(t(lang, "menu_btn_language"))
+        .resized();
+}
+
+
+// ==================================================
 // CUSTOMER MENU
 // ==================================================
 
@@ -452,7 +474,7 @@ async function showCustomerCars(ctx, edit = false) {
 // LANGUAGE COMMAND
 // ==================================================
 
-bot.command("language", async (ctx) => {
+async function showLanguageMenu(ctx) {
 
     const lang = await getLang(ctx);
 
@@ -468,6 +490,11 @@ bot.command("language", async (ctx) => {
             reply_markup: keyboard
         }
     );
+}
+
+
+bot.command("language", async (ctx) => {
+    await showLanguageMenu(ctx);
 });
 
 
@@ -484,6 +511,34 @@ bot.callbackQuery(/^set_lang_(en|az|tr|pl|ru)$/, async (ctx) => {
             language: LANGUAGE_LABELS[lang]
         })
     );
+
+    // editMessageText can only ever carry an InlineKeyboardMarkup (Telegram
+    // doesn't allow switching a message to a ReplyKeyboardMarkup via edit),
+    // so refreshing the persistent bottom keyboard's labels into the new
+    // language needs a fresh message — then hand back to the customer's
+    // usual status menu, per the "return cleanly" requirement.
+    await ctx.reply(
+        t(lang, "keyboard_hint"),
+        {
+            reply_markup: mainReplyKeyboard(lang)
+        }
+    );
+
+    await showCustomerCars(ctx);
+});
+
+
+// Persistent bottom keyboard buttons send their label as plain text, in
+// whatever language the customer's keyboard was last drawn in — match all
+// supported languages' labels so this keeps working even right after a
+// language change (before the keyboard has been redrawn) or if Telegram
+// serves a stale cached keyboard.
+bot.hears(SUPPORTED_LANGS.map((code) => t(code, "menu_btn_status")), async (ctx) => {
+    await showCustomerCars(ctx);
+});
+
+bot.hears(SUPPORTED_LANGS.map((code) => t(code, "menu_btn_language")), async (ctx) => {
+    await showLanguageMenu(ctx);
 });
 
 
@@ -524,7 +579,8 @@ bot.command("start", async (ctx) => {
             await ctx.reply(
                 t(lang, "onboarding_generic"),
                 {
-                    parse_mode: "Markdown"
+                    parse_mode: "Markdown",
+                    reply_markup: mainReplyKeyboard(lang)
                 }
             );
 
@@ -534,7 +590,12 @@ bot.command("start", async (ctx) => {
 
         if (await isCompanyArchived(customer.company_id)) {
 
-            await ctx.reply(t(lang, "company_archived"));
+            await ctx.reply(
+                t(lang, "company_archived"),
+                {
+                    reply_markup: mainReplyKeyboard(lang)
+                }
+            );
 
             return;
         }
@@ -566,7 +627,8 @@ bot.command("start", async (ctx) => {
             }),
 
             {
-                parse_mode: "Markdown"
+                parse_mode: "Markdown",
+                reply_markup: mainReplyKeyboard(lang)
             }
         );
 
@@ -827,6 +889,18 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
 
         {
             parse_mode: "Markdown"
+        }
+    );
+
+
+    // editMessageText (above) can only ever carry an InlineKeyboardMarkup,
+    // never a ReplyKeyboardMarkup — this is the first moment a brand-new,
+    // QR-first customer (who never typed a bare /start) can be handed the
+    // persistent bottom keyboard, so it needs its own fresh message.
+    await ctx.reply(
+        t(lang, "keyboard_hint"),
+        {
+            reply_markup: mainReplyKeyboard(lang)
         }
     );
 

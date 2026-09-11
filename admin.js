@@ -434,6 +434,7 @@ router.get("/", requireLogin, async (req, res) => {
         .select(`
             *,
             customers (
+                id,
                 name,
                 phone,
                 telegram_id
@@ -480,6 +481,14 @@ router.get("/", requireLogin, async (req, res) => {
                     <p>
                         👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
                     </p>
+
+                    ${car.customers ? `
+                        <p>
+                            📱 ${car.customers.phone
+                                ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
+                                : at(lang, "phone_missing")}
+                        </p>
+                    ` : ""}
 
                     <p>
                         ${statusLabel(lang, car.status)}
@@ -847,6 +856,24 @@ router.get("/add-car", requireLogin, async (req, res) => {
                     </select>
 
 
+                    <p style="color:#6b7280;font-size:14px;margin:0 0 8px;">
+                        ${at(lang, "new_customer_heading")}
+                    </p>
+
+                    <label>${at(lang, "label_new_customer_name")}</label>
+
+                    <input
+                        name="new_customer_name"
+                    />
+
+                    <label>${at(lang, "label_new_customer_phone")}</label>
+
+                    <input
+                        name="new_customer_phone"
+                        placeholder="+48 123 456 789"
+                    />
+
+
                     <label>${at(lang, "label_brand")}</label>
 
                     <input
@@ -914,6 +941,8 @@ router.post("/add-car", requireLogin, async (req, res) => {
 
     const {
         customer_id,
+        new_customer_name,
+        new_customer_phone,
         brand,
         model,
         registration,
@@ -922,11 +951,44 @@ router.post("/add-car", requireLogin, async (req, res) => {
     } = req.body;
 
 
+    // Picking an existing customer always wins over the new-customer
+    // fields, even if both were somehow submitted — the dropdown holds
+    // only this company's own customers (see the GET handler above), so
+    // it's the safer of the two to prefer.
+    let resolvedCustomerId = customer_id || null;
+
+    if (!resolvedCustomerId && new_customer_name && new_customer_name.trim()) {
+
+        const { data: newCustomer, error: customerError } = await supabase
+            .from("customers")
+            .insert({
+                company_id: req.session.companyId,
+                name: new_customer_name.trim(),
+                phone: (new_customer_phone || "").trim() || null
+            })
+            .select()
+            .single();
+
+        if (customerError) {
+
+            console.error(customerError);
+
+            return res.send(`
+                <h2>${at(lang, "car_create_error_title")}</h2>
+                <pre>${escapeHtml(customerError.message)}</pre>
+                <a href="/admin/add-car">${at(lang, "go_back")}</a>
+            `);
+        }
+
+        resolvedCustomerId = newCustomer.id;
+    }
+
+
     const { data: car, error } = await supabase
         .from("cars")
         .insert({
             company_id: req.session.companyId,
-            customer_id: customer_id || null,
+            customer_id: resolvedCustomerId,
             brand,
             model,
             registration,
@@ -970,6 +1032,7 @@ router.get("/car/:id", requireLogin, async (req, res) => {
         .select(`
             *,
             customers (
+                id,
                 name,
                 phone
             )
@@ -1070,6 +1133,16 @@ router.get("/car/:id", requireLogin, async (req, res) => {
                     👤 ${escapeHtml(car.customers?.name) || at(lang, "customer_missing")}
                 </p>
 
+                ${car.customers ? `
+                    <p>
+                        📱 ${car.customers.phone
+                            ? `<a href="tel:${escapeHtml(car.customers.phone)}">${escapeHtml(car.customers.phone)}</a>`
+                            : at(lang, "phone_missing")}
+                        &nbsp;
+                        <a href="/admin/customer/${car.customers.id}/edit">${at(lang, "edit_customer_link")}</a>
+                    </p>
+                ` : ""}
+
 
                 <h2>${at(lang, "qr_heading")}</h2>
 
@@ -1103,6 +1176,157 @@ router.get("/car/:id", requireLogin, async (req, res) => {
 
         </html>
     `);
+});
+
+
+// ==========================================
+// EDIT CUSTOMER (name + phone)
+// ==========================================
+// No dedicated customer management UI exists elsewhere — this is reached
+// from the customer's phone number next to their vehicle(s). Always
+// scoped to the logged-in admin's own company, so one company's manager
+// can never view or edit another company's customer.
+
+router.get("/customer/:id/edit", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const { data: customer, error } = await supabase
+        .from("customers")
+        .select("id, name, phone")
+        .eq("id", req.params.id)
+        .eq("company_id", req.session.companyId)
+        .maybeSingle();
+
+
+    if (error || !customer) {
+
+        return res.send(`
+            <h2>${at(lang, "customer_missing")}</h2>
+            <a href="/admin">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+
+    res.send(`
+        <!DOCTYPE html>
+
+        <html>
+
+        <head>
+
+            <title>${at(lang, "edit_customer_title")}</title>
+
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+
+            <style>
+
+                body {
+                    font-family: Arial;
+                    background: #f4f6f8;
+                    padding: 30px;
+                }
+
+                .box {
+                    max-width: 600px;
+                    margin: auto;
+                    background: white;
+                    padding: 30px;
+                    border-radius: 15px;
+                }
+
+                input {
+                    width: 100%;
+                    padding: 12px;
+                    margin: 8px 0 18px;
+                }
+
+                button {
+                    padding: 14px;
+                    width: 100%;
+                    background: #111827;
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                }
+
+            </style>
+
+        </head>
+
+
+        <body>
+
+            <div class="box">
+
+                <h1>${at(lang, "edit_customer_title")}</h1>
+
+                <form method="POST" action="/admin/customer/${customer.id}/edit">
+
+                    <label>${at(lang, "label_customer")}</label>
+
+                    <input
+                        name="name"
+                        value="${escapeHtml(customer.name)}"
+                        required
+                    />
+
+                    <label>${at(lang, "label_phone")}</label>
+
+                    <input
+                        name="phone"
+                        value="${escapeHtml(customer.phone)}"
+                        placeholder="+48 123 456 789"
+                    />
+
+                    <button>
+                        ${at(lang, "save_button")}
+                    </button>
+
+                </form>
+
+                <br>
+
+                <a href="/admin">${at(lang, "back_to_admin")}</a>
+
+            </div>
+
+        </body>
+
+        </html>
+    `);
+});
+
+
+router.post("/customer/:id/edit", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const { name, phone } = req.body;
+
+    const { error } = await supabase
+        .from("customers")
+        .update({
+            name,
+            phone: (phone || "").trim() || null
+        })
+        .eq("id", req.params.id)
+        .eq("company_id", req.session.companyId);
+
+
+    if (error) {
+
+        console.error(error);
+
+        return res.send(`
+            <h2>${at(lang, "customer_update_error_title")}</h2>
+            <pre>${escapeHtml(error.message)}</pre>
+            <a href="/admin/customer/${req.params.id}/edit">${at(lang, "go_back")}</a>
+        `);
+    }
+
+
+    res.redirect("/admin");
 });
 
 

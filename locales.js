@@ -221,7 +221,10 @@ const STRINGS = {
         delete_error: "❌ Could not delete the vehicle. Please try again.",
         company_archived: "❌ This service is currently unavailable. Please contact the workshop directly.",
         onboarding_generic: "🤖 *AutoCore*\n\nWelcome! To see your vehicle's status, please scan the QR code or open the link provided by your workshop.",
-        car_different_company: "❌ Your Telegram account is already registered with a different workshop. Please contact support if you believe this is a mistake."
+        car_different_company: "❌ Your Telegram account is already registered with a different workshop. Please contact support if you believe this is a mistake.",
+        menu_btn_status: "📊 Status",
+        menu_btn_language: "🌐 Language",
+        keyboard_hint: "You can always check your status or change language using the buttons below."
     },
 
     az: {
@@ -274,7 +277,10 @@ const STRINGS = {
         delete_error: "❌ Avtomobili silmək mümkün olmadı. Zəhmət olmasa yenidən cəhd edin.",
         company_archived: "❌ Bu servis hazırda əlçatan deyil. Zəhmət olmasa birbaşa servislə əlaqə saxlayın.",
         onboarding_generic: "🤖 *AutoCore*\n\nXoş gəlmisiniz! Avtomobilinizin statusunu görmək üçün zəhmət olmasa servisinizin təqdim etdiyi QR kodu skan edin və ya linki açın.",
-        car_different_company: "❌ Telegram hesabınız artıq başqa bir servisə qeydiyyatdan keçib. Bunun səhv olduğunu düşünürsünüzsə, dəstək xidməti ilə əlaqə saxlayın."
+        car_different_company: "❌ Telegram hesabınız artıq başqa bir servisə qeydiyyatdan keçib. Bunun səhv olduğunu düşünürsünüzsə, dəstək xidməti ilə əlaqə saxlayın.",
+        menu_btn_status: "📊 Status",
+        menu_btn_language: "🌐 Dil",
+        keyboard_hint: "Aşağıdakı düymələrdən istifadə edərək istənilən vaxt statusunuzu yoxlaya və ya dili dəyişə bilərsiniz."
     },
 
     tr: {
@@ -327,7 +333,10 @@ const STRINGS = {
         delete_error: "❌ Araç silinemedi. Lütfen tekrar deneyin.",
         company_archived: "❌ Bu servis şu anda kullanılamıyor. Lütfen servisle doğrudan iletişime geçin.",
         onboarding_generic: "🤖 *AutoCore*\n\nHoş geldiniz! Aracınızın durumunu görmek için lütfen servisinizin verdiği QR kodu tarayın veya bağlantıyı açın.",
-        car_different_company: "❌ Telegram hesabınız zaten başka bir servise kayıtlı. Bunun bir hata olduğunu düşünüyorsanız lütfen destek ile iletişime geçin."
+        car_different_company: "❌ Telegram hesabınız zaten başka bir servise kayıtlı. Bunun bir hata olduğunu düşünüyorsanız lütfen destek ile iletişime geçin.",
+        menu_btn_status: "📊 Durum",
+        menu_btn_language: "🌐 Dil",
+        keyboard_hint: "Aşağıdaki düğmeleri kullanarak istediğiniz zaman durumunuzu kontrol edebilir veya dili değiştirebilirsiniz."
     },
 
     pl: {
@@ -380,7 +389,10 @@ const STRINGS = {
         delete_error: "❌ Nie udało się usunąć pojazdu. Spróbuj ponownie.",
         company_archived: "❌ Ten serwis jest obecnie niedostępny. Skontaktuj się bezpośrednio z warsztatem.",
         onboarding_generic: "🤖 *AutoCore*\n\nWitamy! Aby zobaczyć status swojego pojazdu, zeskanuj kod QR lub otwórz link otrzymany od swojego warsztatu.",
-        car_different_company: "❌ Twoje konto Telegram jest już zarejestrowane w innym warsztacie. Jeśli uważasz, że to pomyłka, skontaktuj się z pomocą techniczną."
+        car_different_company: "❌ Twoje konto Telegram jest już zarejestrowane w innym warsztacie. Jeśli uważasz, że to pomyłka, skontaktuj się z pomocą techniczną.",
+        menu_btn_status: "📊 Status",
+        menu_btn_language: "🌐 Język",
+        keyboard_hint: "Za pomocą przycisków poniżej możesz zawsze sprawdzić status lub zmienić język."
     },
 
     ru: {
@@ -433,7 +445,10 @@ const STRINGS = {
         delete_error: "❌ Не удалось удалить автомобиль. Попробуйте ещё раз.",
         company_archived: "❌ Этот сервис временно недоступен. Пожалуйста, свяжитесь с сервисом напрямую.",
         onboarding_generic: "🤖 *AutoCore*\n\nДобро пожаловать! Чтобы увидеть статус вашего автомобиля, отсканируйте QR-код или откройте ссылку, предоставленную вашим сервисом.",
-        car_different_company: "❌ Ваш аккаунт Telegram уже зарегистрирован в другом сервисе. Если вы считаете, что это ошибка, свяжитесь с поддержкой."
+        car_different_company: "❌ Ваш аккаунт Telegram уже зарегистрирован в другом сервисе. Если вы считаете, что это ошибка, свяжитесь с поддержкой.",
+        menu_btn_status: "📊 Статус",
+        menu_btn_language: "🌐 Язык",
+        keyboard_hint: "Вы всегда можете проверить статус или изменить язык с помощью кнопок ниже."
     }
 };
 
@@ -504,7 +519,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Delete",
         btn_delete_cancel: "Cancel",
         delete_success_notice: "✅ Vehicle deleted.",
-        delete_error_title: "❌ Could not delete the vehicle"
+        delete_error_title: "❌ Could not delete the vehicle",
+        label_phone: "Phone number",
+        new_customer_heading: "— or create a new customer —",
+        label_new_customer_name: "New customer name",
+        label_new_customer_phone: "New customer phone number",
+        phone_missing: "No phone number",
+        edit_customer_link: "✏️ Edit customer",
+        edit_customer_title: "✏️ Edit customer",
+        save_button: "💾 Save",
+        customer_update_error_title: "❌ Could not update customer"
     },
 
     pl: {
@@ -552,7 +576,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Usuń",
         btn_delete_cancel: "Anuluj",
         delete_success_notice: "✅ Samochód usunięty.",
-        delete_error_title: "❌ Nie udało się usunąć samochodu"
+        delete_error_title: "❌ Nie udało się usunąć samochodu",
+        label_phone: "Numer telefonu",
+        new_customer_heading: "— lub utwórz nowego klienta —",
+        label_new_customer_name: "Imię nowego klienta",
+        label_new_customer_phone: "Numer telefonu nowego klienta",
+        phone_missing: "Brak numeru telefonu",
+        edit_customer_link: "✏️ Edytuj klienta",
+        edit_customer_title: "✏️ Edytuj klienta",
+        save_button: "💾 Zapisz",
+        customer_update_error_title: "❌ Nie udało się zaktualizować klienta"
     },
 
     de: {
@@ -600,7 +633,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Löschen",
         btn_delete_cancel: "Abbrechen",
         delete_success_notice: "✅ Fahrzeug gelöscht.",
-        delete_error_title: "❌ Fahrzeug konnte nicht gelöscht werden"
+        delete_error_title: "❌ Fahrzeug konnte nicht gelöscht werden",
+        label_phone: "Telefonnummer",
+        new_customer_heading: "— oder neuen Kunden anlegen —",
+        label_new_customer_name: "Name des neuen Kunden",
+        label_new_customer_phone: "Telefonnummer des neuen Kunden",
+        phone_missing: "Keine Telefonnummer",
+        edit_customer_link: "✏️ Kunde bearbeiten",
+        edit_customer_title: "✏️ Kunde bearbeiten",
+        save_button: "💾 Speichern",
+        customer_update_error_title: "❌ Kunde konnte nicht aktualisiert werden"
     },
 
     tr: {
@@ -648,7 +690,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Sil",
         btn_delete_cancel: "İptal",
         delete_success_notice: "✅ Araç silindi.",
-        delete_error_title: "❌ Araç silinemedi"
+        delete_error_title: "❌ Araç silinemedi",
+        label_phone: "Telefon numarası",
+        new_customer_heading: "— veya yeni bir müşteri oluştur —",
+        label_new_customer_name: "Yeni müşteri adı",
+        label_new_customer_phone: "Yeni müşteri telefon numarası",
+        phone_missing: "Telefon numarası yok",
+        edit_customer_link: "✏️ Müşteriyi düzenle",
+        edit_customer_title: "✏️ Müşteriyi düzenle",
+        save_button: "💾 Kaydet",
+        customer_update_error_title: "❌ Müşteri güncellenemedi"
     },
 
     az: {
@@ -696,7 +747,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Sil",
         btn_delete_cancel: "Ləğv et",
         delete_success_notice: "✅ Avtomobil silindi.",
-        delete_error_title: "❌ Avtomobili silmək mümkün olmadı"
+        delete_error_title: "❌ Avtomobili silmək mümkün olmadı",
+        label_phone: "Telefon nömrəsi",
+        new_customer_heading: "— və ya yeni müştəri yarat —",
+        label_new_customer_name: "Yeni müştərinin adı",
+        label_new_customer_phone: "Yeni müştərinin telefon nömrəsi",
+        phone_missing: "Telefon nömrəsi yoxdur",
+        edit_customer_link: "✏️ Müştərini redaktə et",
+        edit_customer_title: "✏️ Müştərini redaktə et",
+        save_button: "💾 Yadda saxla",
+        customer_update_error_title: "❌ Müştəri yenilənmədi"
     },
 
     ru: {
@@ -744,7 +804,16 @@ const ADMIN_STRINGS = {
         btn_delete_confirm: "🗑 Удалить",
         btn_delete_cancel: "Отмена",
         delete_success_notice: "✅ Автомобиль удалён.",
-        delete_error_title: "❌ Не удалось удалить автомобиль"
+        delete_error_title: "❌ Не удалось удалить автомобиль",
+        label_phone: "Номер телефона",
+        new_customer_heading: "— или создать нового клиента —",
+        label_new_customer_name: "Имя нового клиента",
+        label_new_customer_phone: "Номер телефона нового клиента",
+        phone_missing: "Номер телефона не указан",
+        edit_customer_link: "✏️ Редактировать клиента",
+        edit_customer_title: "✏️ Редактировать клиента",
+        save_button: "💾 Сохранить",
+        customer_update_error_title: "❌ Не удалось обновить клиента"
     }
 };
 

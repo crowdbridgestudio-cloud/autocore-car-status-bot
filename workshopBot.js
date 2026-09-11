@@ -197,33 +197,6 @@ if (WORKSHOP_BOT_TOKEN) {
 
 
     // ==================================================
-    // TEMPORARY: /chatid — diagnostic only, to collect the numeric
-    // chat ids needed for workshop_telegram_groups rows. Group/supergroup
-    // only (no point in a private chat with the bot), replies with the
-    // chat's own public info only — never a token or any other secret.
-    // Remove once the workshop + manager group ids have been collected.
-    // ==================================================
-
-    workshopBot.command("chatid", async (ctx) => {
-
-        const chatType = ctx.chat.type;
-
-        if (chatType !== "group" && chatType !== "supergroup") {
-
-            await ctx.reply("⚠️ /chatid only works in group chats.");
-
-            return;
-        }
-
-        await ctx.reply(
-            `Chat ID: ${ctx.chat.id}\n` +
-            `Title: ${ctx.chat.title}\n` +
-            `Type: ${chatType}`
-        );
-    });
-
-
-    // ==================================================
     // /save <registration>
     // ==================================================
 

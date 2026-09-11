@@ -159,7 +159,28 @@ if (WORKSHOP_BOT_TOKEN) {
     // the main bot isn't a member of the manager group (so it has no
     // "from_chat_id" to copy from), and a Workshop Bot file_id is never
     // valid when handed to a different bot's API in the first place.
+    // A customer may have more than one vehicle at this workshop — without
+    // this, a bare photo/video with no caption from the mechanic arrives
+    // with zero context about which car it's for. Emoji + registration
+    // needs no translation, so this doesn't require per-customer language
+    // lookup (unlike the rest of the customer-facing bot).
+    function vehicleContextLine(row) {
+
+        const car = row.cars;
+
+        if (!car) return null;
+
+        const label = [car.brand, car.model].filter(Boolean).join(" ");
+
+        if (!label && !car.registration) return null;
+
+        return `🚗 ${label}${car.registration ? ` (${car.registration})` : ""}`;
+    }
+
+
     async function relayToCustomer(row, customerTelegramId) {
+
+        const contextLine = vehicleContextLine(row);
 
         if (row.media_type === "text") {
 
@@ -167,7 +188,11 @@ if (WORKSHOP_BOT_TOKEN) {
                 throw new Error("No text content was stored for this saved item.");
             }
 
-            await customerBot.api.sendMessage(customerTelegramId, row.text_content);
+            const textMessage = contextLine
+                ? `${contextLine}\n\n${row.text_content}`
+                : row.text_content;
+
+            await customerBot.api.sendMessage(customerTelegramId, textMessage);
             return;
         }
 
@@ -201,7 +226,9 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
         const inputFile = new InputFile(buffer);
-        const sendOptions = row.caption ? { caption: row.caption } : undefined;
+
+        const caption = [contextLine, row.caption].filter(Boolean).join("\n\n") || undefined;
+        const sendOptions = caption ? { caption } : undefined;
 
         if (row.media_type === "photo") {
             await customerBot.api.sendPhoto(customerTelegramId, inputFile, sendOptions);

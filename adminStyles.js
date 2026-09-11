@@ -11,12 +11,16 @@
 // every page should carry, and the STATUS_COLORS map used to color-code
 // the status badge shown on vehicle cards.
 
+// Inline SVG data URI — no new static file/route needed just for a tab icon.
+const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23111827'/%3E%3Ctext x='50' y='68' font-size='55' text-anchor='middle'%3E%F0%9F%9A%97%3C/text%3E%3C/svg%3E";
+
 const HEAD_META = `
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#111827">
+    <link rel="icon" href="${FAVICON}">
 `;
 
 // Keyed by the same STATUS_KEYS used throughout admin.js/locales.js —

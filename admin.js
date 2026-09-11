@@ -1335,7 +1335,9 @@ router.post("/status", requireLogin, async (req, res) => {
 
 
         const message =
-            `🚗 *${car.brand} ${car.model}*\n\n` +
+            `🚗 *${car.brand} ${car.model}*` +
+            (car.registration ? ` (${car.registration})` : "") +
+            `\n\n` +
 
             t(customerLang, "status_updated_title") +
 

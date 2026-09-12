@@ -800,10 +800,34 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
     }
 
 
-    // Car IDs are sequential and guessable — refuse to hand over a car
-    // that is already linked to a different customer's account.
+    // A car's OWN assigned customer, if any — NOT the same thing as
+    // whether targetCar.customer_id merely differs from this scanning
+    // user's own customer.id. The admin can pre-assign a car to a
+    // customer record (name + phone, entered on the Add Car form) before
+    // that customer has ever touched Telegram, so that record's
+    // telegram_id is still null at this point. Treating "customer_id is
+    // set" alone as "belongs to someone else" — the previous logic here —
+    // incorrectly rejected exactly that first-ever connection with
+    // "already linked", even though nobody had actually connected yet.
+    let targetCarCustomer = null;
 
-    if (targetCar.customer_id && (!customer || targetCar.customer_id !== customer.id)) {
+    if (targetCar.customer_id) {
+
+        const { data } = await supabase
+            .from("customers")
+            .select("*")
+            .eq("id", targetCar.customer_id)
+            .maybeSingle();
+
+        targetCarCustomer = data;
+    }
+
+
+    // Genuinely already linked: the car's own customer record has
+    // ALREADY connected a Telegram account, and it isn't this one. This
+    // is the only condition that should ever produce "already linked" —
+    // preserves the actual ownership protection this check exists for.
+    if (targetCarCustomer && targetCarCustomer.telegram_id && targetCarCustomer.telegram_id !== telegramId) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_already_linked"),
@@ -814,38 +838,67 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
     }
 
 
-    // Create customer
+    // Resolve which customer record this connection should use.
 
     if (!customer) {
 
-        // The new customer belongs to whichever company owns the car
-        // they're actually connecting — never a hardcoded default. This
-        // is what keeps a customer visible in the right company's admin
-        // panel (e.g. the "select customer" dropdown on Add Car).
-        const { data: newCustomer, error } = await supabase
-            .from("customers")
-            .insert({
-                company_id: targetCar.company_id,
-                name: name || "Telegram Customer",
-                telegram_id: telegramId
-            })
-            .select()
-            .single();
+        if (targetCarCustomer) {
+
+            // Claim the admin-entered placeholder (preserves the name/
+            // phone already on file) instead of creating a second, blank
+            // customer record for the same person.
+            const { data: claimedCustomer, error } = await supabase
+                .from("customers")
+                .update({ telegram_id: telegramId })
+                .eq("id", targetCarCustomer.id)
+                .select()
+                .single();
+
+            if (error) {
+
+                console.error("Customer claim error:", error);
+
+                await ctx.answerCallbackQuery({
+                    text: t(lang, "customer_create_error"),
+                    show_alert: true
+                });
+
+                return;
+            }
+
+            customer = claimedCustomer;
+
+        } else {
+
+            // The new customer belongs to whichever company owns the car
+            // they're actually connecting — never a hardcoded default. This
+            // is what keeps a customer visible in the right company's admin
+            // panel (e.g. the "select customer" dropdown on Add Car).
+            const { data: newCustomer, error } = await supabase
+                .from("customers")
+                .insert({
+                    company_id: targetCar.company_id,
+                    name: name || "Telegram Customer",
+                    telegram_id: telegramId
+                })
+                .select()
+                .single();
 
 
-        if (error) {
+            if (error) {
 
-            console.error("Customer creation error:", error);
+                console.error("Customer creation error:", error);
 
-            await ctx.answerCallbackQuery({
-                text: t(lang, "customer_create_error"),
-                show_alert: true
-            });
+                await ctx.answerCallbackQuery({
+                    text: t(lang, "customer_create_error"),
+                    show_alert: true
+                });
 
-            return;
+                return;
+            }
+
+            customer = newCustomer;
         }
-
-        customer = newCustomer;
 
         // Best-effort: persist the language the customer is already using.
         await supabase

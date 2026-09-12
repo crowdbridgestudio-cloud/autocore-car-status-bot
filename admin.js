@@ -2,6 +2,7 @@ const express = require("express");
 const QRCode = require("qrcode");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
 const supabase = require("./supabase");
 
@@ -22,11 +23,44 @@ const {
 } = require("./locales");
 
 const { escapeHtml } = require("./utils");
-const { HEAD_META, BASE_STYLES, statusBadgeStyle } = require("./adminStyles");
+const { HEAD_META, BASE_STYLES, statusBadgeStyle, DOUBLE_SUBMIT_GUARD_SCRIPT } = require("./adminStyles");
 
 const notificationBot = new Bot(process.env.BOT_TOKEN);
 
 const router = express.Router();
+
+
+// ==========================================
+// CREATE-VEHICLE IDEMPOTENCY GUARD
+// ==========================================
+// In-process only (matches the existing in-memory languageCache pattern
+// in index.js — this app runs as a single Render instance, no
+// multi-process/Redis concern here). Keyed by a random token minted
+// fresh every time the Add Car FORM is rendered (GET /add-car) and
+// carried through as a hidden field, so: a double-click or Enter-key
+// resubmit of the SAME page load reuses the SAME token and is deduped;
+// reloading the page (or opening a second tab) mints a NEW token, so an
+// intentionally separate vehicle is never blocked. A naive "reject if
+// this registration already exists" rule was deliberately avoided — two
+// companies, or even one, can legitimately have duplicate registrations
+// (already true of real data in this system).
+//
+// Entries are pruned lazily (on the next POST) once older than 10
+// minutes — plenty for even a very slow double-click, tiny enough to
+// never be a real memory concern for an admin-panel form.
+const pendingCarCreations = new Map();
+const CREATE_CAR_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+function pruneExpiredCarTokens() {
+
+    const now = Date.now();
+
+    for (const [key, entry] of pendingCarCreations) {
+        if (now - entry.startedAt > CREATE_CAR_TOKEN_TTL_MS) {
+            pendingCarCreations.delete(key);
+        }
+    }
+}
 
 
 // ==========================================
@@ -188,6 +222,8 @@ router.get("/login", (req, res) => {
                 </div>
 
             </div>
+
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
 
         </body>
         </html>
@@ -567,6 +603,8 @@ router.get("/", requireLogin, async (req, res) => {
 
             </div>
 
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
+
         </body>
 
         </html>
@@ -600,6 +638,10 @@ router.get("/add-car", requireLogin, async (req, res) => {
             ${escapeHtml(customer.name)}
         </option>
     `).join("");
+
+
+    // Minted fresh on every page render — see pendingCarCreations above.
+    const idempotencyKey = crypto.randomUUID();
 
 
     res.send(`
@@ -637,6 +679,8 @@ router.get("/add-car", requireLogin, async (req, res) => {
                     <h1>${at(lang, "add_car_title")}</h1>
 
                     <form method="POST" action="/admin/add-car">
+
+                        <input type="hidden" name="idempotency_key" value="${idempotencyKey}" />
 
                         <label>${at(lang, "label_customer")}</label>
 
@@ -712,7 +756,11 @@ router.get("/add-car", requireLogin, async (req, res) => {
                         ></textarea>
 
 
-                        <button class="btn btn-primary btn-block" style="margin-top:16px;">
+                        <button
+                            class="btn btn-primary btn-block"
+                            style="margin-top:16px;"
+                            data-loading-text="${at(lang, "create_car_loading")}"
+                        >
                             ${at(lang, "create_car_button")}
                         </button>
 
@@ -721,6 +769,8 @@ router.get("/add-car", requireLogin, async (req, res) => {
                 </div>
 
             </div>
+
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
 
         </body>
 
@@ -738,6 +788,7 @@ router.post("/add-car", requireLogin, async (req, res) => {
     const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
 
     const {
+        idempotency_key: idempotencyKey,
         customer_id,
         new_customer_name,
         new_customer_phone,
@@ -747,6 +798,52 @@ router.post("/add-car", requireLogin, async (req, res) => {
         vin,
         problem
     } = req.body;
+
+
+    // ------------------------------------------------------------
+    // DUPLICATE-SUBMISSION GUARD
+    // ------------------------------------------------------------
+    // The check-then-claim below is synchronous (no `await` in between),
+    // so it's atomic with respect to any other request Node might be
+    // handling — a genuinely simultaneous double-click can't have both
+    // requests see "not claimed yet" and both proceed to insert a car.
+    pruneExpiredCarTokens();
+
+    if (idempotencyKey) {
+
+        const existing = pendingCarCreations.get(idempotencyKey);
+
+        if (existing) {
+
+            if (existing.status === "done") {
+                return res.redirect(`/admin/car/${existing.carId}`);
+            }
+
+            // Still in flight (the near-simultaneous case) — wait briefly
+            // for the request that's actually doing the insert to finish,
+            // rather than starting a second one. Bounded so a genuinely
+            // stuck request can't hang this one forever.
+            const deadline = Date.now() + 5000;
+
+            while (Date.now() < deadline) {
+
+                await new Promise((resolve) => setTimeout(resolve, 150));
+
+                const current = pendingCarCreations.get(idempotencyKey);
+
+                if (!current) break; // the other request failed and cleared it — fall through and try fresh
+
+                if (current.status === "done") {
+                    return res.redirect(`/admin/car/${current.carId}`);
+                }
+            }
+
+            // Timed out or the other attempt failed — fall through to
+            // create fresh rather than leaving the admin stuck.
+        }
+
+        pendingCarCreations.set(idempotencyKey, { status: "pending", startedAt: Date.now() });
+    }
 
 
     // Picking an existing customer always wins over the new-customer
@@ -770,6 +867,11 @@ router.post("/add-car", requireLogin, async (req, res) => {
         if (customerError) {
 
             console.error(customerError);
+
+            // Clear the claim so a genuine retry (new page load, or the
+            // admin fixing something and pressing the browser's retry)
+            // isn't permanently blocked by a failed attempt.
+            if (idempotencyKey) pendingCarCreations.delete(idempotencyKey);
 
             return res.send(`
                 <h2>${at(lang, "car_create_error_title")}</h2>
@@ -802,11 +904,18 @@ router.post("/add-car", requireLogin, async (req, res) => {
 
         console.error(error);
 
+        if (idempotencyKey) pendingCarCreations.delete(idempotencyKey);
+
         return res.send(`
             <h2>${at(lang, "car_create_error_title")}</h2>
             <pre>${escapeHtml(error.message)}</pre>
             <a href="/admin/add-car">${at(lang, "go_back")}</a>
         `);
+    }
+
+
+    if (idempotencyKey) {
+        pendingCarCreations.set(idempotencyKey, { status: "done", carId: car.id, startedAt: Date.now() });
     }
 
 
@@ -970,6 +1079,8 @@ router.get("/car/:id", requireLogin, async (req, res) => {
 
             </div>
 
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
+
         </body>
 
         </html>
@@ -1067,6 +1178,8 @@ router.get("/customer/:id/edit", requireLogin, async (req, res) => {
 
             </div>
 
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
+
         </body>
 
         </html>
@@ -1159,12 +1272,13 @@ router.get("/car/:id/delete", requireLogin, async (req, res) => {
                     <p>${at(lang, "delete_confirm_warning")}</p>
                     <div class="delete-actions">
                         <form method="POST" action="/admin/car/${car.id}/delete">
-                            <button type="submit" class="btn btn-danger btn-block">${at(lang, "btn_delete_confirm")}</button>
+                            <button type="submit" class="btn btn-danger btn-block" data-loading-text="${at(lang, "delete_car_button")}...">${at(lang, "btn_delete_confirm")}</button>
                         </form>
                         <a class="btn btn-outline btn-block" href="/admin">${at(lang, "btn_delete_cancel")}</a>
                     </div>
                 </div>
             </div>
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
         </body>
         </html>
     `);

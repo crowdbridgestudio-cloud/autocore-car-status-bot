@@ -369,8 +369,60 @@ const BASE_STYLES = `
     .login-box .btn { margin-top: 6px; }
 `;
 
+
+// ==================================================
+// DOUBLE-SUBMIT GUARD
+// ==================================================
+// Generic client-side protection against duplicate form submissions —
+// double-clicks, repeated Enter presses, or a slow request the user
+// impatiently retries. Attaches once per page load (plain server-
+// rendered pages, no client router, so there's no risk of this running
+// twice) and covers every <form> on the page, not just one. Locks on
+// the `submit` event itself (not the button's `click`), so it fires no
+// matter how the submission was triggered. Restores the button if the
+// page is ever shown again from the back/forward cache instead of a
+// fresh navigation (e.g. the user hits Back after an error).
+//
+// This is a UX safety net, not the source of truth — real duplicate-
+// creation protection for routes that insert data lives server-side
+// (see admin.js's /add-car idempotency-key handling).
+const DOUBLE_SUBMIT_GUARD_SCRIPT = `
+    <script>
+        (function () {
+            document.querySelectorAll("form").forEach(function (form) {
+                form.addEventListener("submit", function (e) {
+                    if (form.dataset.submitting === "1") {
+                        e.preventDefault();
+                        return;
+                    }
+                    var btn = form.querySelector("button[type=submit], form > button");
+                    if (btn) {
+                        form.dataset.submitting = "1";
+                        btn.disabled = true;
+                        btn.dataset.originalText = btn.textContent;
+                        btn.textContent = btn.dataset.loadingText || (btn.textContent + "…");
+                    }
+                });
+            });
+            window.addEventListener("pageshow", function (e) {
+                if (e.persisted) {
+                    document.querySelectorAll("form").forEach(function (form) {
+                        form.dataset.submitting = "";
+                        var btn = form.querySelector("button[type=submit], form > button");
+                        if (btn && btn.dataset.originalText) {
+                            btn.disabled = false;
+                            btn.textContent = btn.dataset.originalText;
+                        }
+                    });
+                }
+            });
+        })();
+    </script>
+`;
+
 module.exports = {
     HEAD_META,
     BASE_STYLES,
-    statusBadgeStyle
+    statusBadgeStyle,
+    DOUBLE_SUBMIT_GUARD_SCRIPT
 };

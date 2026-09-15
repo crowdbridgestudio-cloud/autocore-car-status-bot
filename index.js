@@ -247,14 +247,21 @@ async function getLang(ctx) {
 
     let stored = null;
 
-    const { data: customer, error } = await supabase
+    // One Telegram account can now hold a customer row in more than one
+    // company (see connect_car_), so this can no longer assume at most
+    // one match — .maybeSingle() would throw once that's true. Language
+    // is a personal preference, not a per-company one, so any one row is
+    // an equally good source; the most recently touched one is the most
+    // likely to reflect a choice they actually made.
+    const { data: rows, error } = await supabase
         .from("customers")
         .select("language")
         .eq("telegram_id", telegramId)
-        .maybeSingle();
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-    if (!error && customer) {
-        stored = customer.language;
+    if (!error && rows && rows.length > 0) {
+        stored = rows[0].language;
     }
 
     const lang = normalizeLang(stored) || resolveLangFromTelegram(ctx);
@@ -274,7 +281,13 @@ async function setLang(ctx, lang) {
     // Best-effort persistence. If the `language` column hasn't been added
     // to `customers` yet, or the customer doesn't exist yet, this simply
     // does nothing — the in-memory cache still keeps the choice for the
-    // rest of the process lifetime.
+    // rest of the process lifetime. Intentionally applies to EVERY
+    // customer row this Telegram account has (one per company it's
+    // connected to) — language is a personal preference, not a
+    // per-company one, so a choice made while looking at one company's
+    // vehicle should carry over to the others too. A plain .update()
+    // updates every matching row, not just one, so this needs no change
+    // now that more than one row can match.
     await supabase
         .from("customers")
         .update({ language: lang })
@@ -303,6 +316,18 @@ async function isCompanyArchived(companyId) {
     if (error || !data) return false;
 
     return !!data.archived_at;
+}
+
+
+// A Telegram account can now own customer identities in more than one
+// company (see connect_car_), so "does this car belong to the requesting
+// user" can no longer be answered by looking up "the" customer for this
+// telegram_id first — there may be several, and only one is relevant:
+// whichever one this SPECIFIC car's own customer_id points to. Looking
+// the car up first and checking its joined customer directly sidesteps
+// that ambiguity entirely, and is simpler than it was before besides.
+function carBelongsToTelegramUser(car, telegramId) {
+    return !!(car && car.customers && car.customers.telegram_id === telegramId);
 }
 
 
@@ -337,13 +362,19 @@ async function showCustomerCars(ctx, edit = false) {
     const telegramId = ctx.from.id;
     const lang = await getLang(ctx);
 
-    const { data: customer, error: customerError } = await supabase
+    // One Telegram account can now hold a customer identity in more than
+    // one company — this shows ALL of them together (their vehicles
+    // across every shop they use), not just one. Each identity is
+    // checked against its OWN company's archived state below, so a
+    // customer with one active and one archived company relationship
+    // still sees the active one's vehicles rather than being blocked
+    // entirely.
+    const { data: customerRows, error: customerError } = await supabase
         .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
-        .maybeSingle();
+        .select("id, company_id")
+        .eq("telegram_id", telegramId);
 
-    if (customerError || !customer) {
+    if (customerError || !customerRows || customerRows.length === 0) {
 
         const message = t(lang, "no_car_linked");
 
@@ -357,8 +388,17 @@ async function showCustomerCars(ctx, edit = false) {
     }
 
 
-    if (await isCompanyArchived(customer.company_id)) {
+    const activeCustomerIds = [];
 
+    for (const row of customerRows) {
+        if (!(await isCompanyArchived(row.company_id))) {
+            activeCustomerIds.push(row.id);
+        }
+    }
+
+    if (activeCustomerIds.length === 0) {
+
+        // Every company this Telegram account is linked to is archived.
         const message = t(lang, "company_archived");
 
         if (edit) {
@@ -374,7 +414,7 @@ async function showCustomerCars(ctx, edit = false) {
     const { data: cars, error: carsError } = await supabase
         .from("cars")
         .select("*")
-        .eq("customer_id", customer.id)
+        .in("customer_id", activeCustomerIds)
         .order("updated_at", {
             ascending: false
         });
@@ -561,17 +601,26 @@ bot.command("start", async (ctx) => {
         // This bot is multi-tenant — a bare /start with no QR/deep-link
         // payload has no way to know which workshop the user means, so it
         // must never guess or default to any single company. The only
-        // company a bare /start can safely show is the one an ALREADY
-        // linked customer belongs to (via their own customers.company_id);
-        // everyone else gets a generic, tenant-neutral onboarding message
-        // that points them at their workshop's QR/deep link instead.
+        // company a bare /start can safely show is one an ALREADY linked
+        // customer belongs to; everyone else gets a generic, tenant-
+        // neutral onboarding message that points them at their
+        // workshop's QR/deep link instead. A Telegram account can now
+        // hold a customer identity in more than one company — bare
+        // /start has no way to know which one the user means either, so
+        // it just picks the most recently connected one as a reasonable
+        // default; the persistent [📊 Status] button always shows every
+        // company's vehicles together regardless of which one this
+        // picked.
         const telegramId = ctx.from.id;
 
-        const { data: customer, error: customerError } = await supabase
+        const { data: customerRows, error: customerError } = await supabase
             .from("customers")
             .select("company_id")
             .eq("telegram_id", telegramId)
-            .maybeSingle();
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+        const customer = customerRows && customerRows[0];
 
 
         if (customerError || !customer) {
@@ -772,32 +821,22 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
     }
 
 
-    // Find customer
-
+    // Find this Telegram account's customer identity WITHIN THIS CAR'S
+    // OWN COMPANY specifically — not globally. AutoCore is sold to
+    // multiple independent repair shops, and the same real person can
+    // legitimately be a customer of several of them with the same
+    // Telegram account (identity = company_id + telegram_id, not
+    // telegram_id alone — see migrations/007). Scoping the lookup by
+    // company here, rather than rejecting outright when a different-
+    // company row exists, is what lets a second company's QR connect
+    // successfully instead of showing "already registered with a
+    // different service".
     let { data: customer } = await supabase
         .from("customers")
         .select("*")
         .eq("telegram_id", telegramId)
+        .eq("company_id", targetCar.company_id)
         .maybeSingle();
-
-
-    // A Telegram account's customer identity belongs to exactly one
-    // company (see getLang/showCustomerCars, which look a customer up by
-    // telegram_id alone with no company scoping). Reusing an existing
-    // customer row to connect a car from a DIFFERENT company would silently
-    // cross-link two tenants' data — the customer's own company_id would
-    // still point at their original workshop while a car from another
-    // workshop now carried their customer_id. Must be rejected before any
-    // of the car-linking checks below.
-    if (customer && customer.company_id !== targetCar.company_id) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "car_different_company"),
-            show_alert: true
-        });
-
-        return;
-    }
 
 
     // A car's OWN assigned customer, if any — NOT the same thing as
@@ -887,17 +926,42 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
 
             if (error) {
 
-                console.error("Customer creation error:", error);
+                // 23505 = unique_violation on (company_id, telegram_id):
+                // a near-simultaneous second tap/update already created
+                // this exact identity a moment ago (e.g. the customer
+                // double-tapping "Connect"). Reuse it instead of failing
+                // — the same outcome as if this request had simply lost
+                // a race, not an actual error.
+                if (error.code === "23505") {
 
-                await ctx.answerCallbackQuery({
-                    text: t(lang, "customer_create_error"),
-                    show_alert: true
-                });
+                    const { data: raceWinner } = await supabase
+                        .from("customers")
+                        .select("*")
+                        .eq("telegram_id", telegramId)
+                        .eq("company_id", targetCar.company_id)
+                        .maybeSingle();
 
-                return;
+                    if (raceWinner) {
+                        customer = raceWinner;
+                    }
+                }
+
+                if (!customer) {
+
+                    console.error("Customer creation error:", error);
+
+                    await ctx.answerCallbackQuery({
+                        text: t(lang, "customer_create_error"),
+                        show_alert: true
+                    });
+
+                    return;
+                }
+
+            } else {
+
+                customer = newCustomer;
             }
-
-            customer = newCustomer;
         }
 
         // Best-effort: persist the language the customer is already using.
@@ -989,47 +1053,28 @@ bot.callbackQuery(/^car_status_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
+    const { data: car } = await supabase
+        .from("cars")
+        .select("*, customers ( telegram_id )")
+        .eq("id", carId)
         .maybeSingle();
 
 
-    if (!customer) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    if (await isCompanyArchived(customer.company_id)) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "company_archived"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    const { data: car } = await supabase
-        .from("cars")
-        .select("*")
-        .eq("id", carId)
-        .eq("customer_id", customer.id)
-        .single();
-
-
-    if (!car) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_linked_to_you"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -1083,47 +1128,28 @@ bot.callbackQuery(/^car_history_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
+    const { data: car } = await supabase
+        .from("cars")
+        .select("*, customers ( telegram_id )")
+        .eq("id", carId)
         .maybeSingle();
 
 
-    if (!customer) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    if (await isCompanyArchived(customer.company_id)) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "company_archived"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    const { data: car } = await supabase
-        .from("cars")
-        .select("*")
-        .eq("id", carId)
-        .eq("customer_id", customer.id)
-        .single();
-
-
-    if (!car) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -1202,47 +1228,28 @@ bot.callbackQuery(/^car_info_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
+    const { data: car } = await supabase
+        .from("cars")
+        .select("*, customers ( telegram_id )")
+        .eq("id", carId)
         .maybeSingle();
 
 
-    if (!customer) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    if (await isCompanyArchived(customer.company_id)) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "company_archived"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    const { data: car } = await supabase
-        .from("cars")
-        .select("*")
-        .eq("id", carId)
-        .eq("customer_id", customer.id)
-        .single();
-
-
-    if (!car) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -1294,39 +1301,11 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
-        .maybeSingle();
-
-
-    if (!customer) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    if (await isCompanyArchived(customer.company_id)) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "company_archived"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
     const { data: car } = await supabase
         .from("cars")
         .select(`
             *,
+            customers ( telegram_id ),
             companies (
                 name,
                 phone,
@@ -1334,14 +1313,24 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
             )
         `)
         .eq("id", carId)
-        .eq("customer_id", customer.id)
-        .single();
+        .maybeSingle();
 
 
-    if (!car) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_found"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -1390,51 +1379,32 @@ bot.callbackQuery(/^delete_car_confirm_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
-        .maybeSingle();
-
-
-    if (!customer) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
-    if (await isCompanyArchived(customer.company_id)) {
-
-        await ctx.answerCallbackQuery({
-            text: t(lang, "company_archived"),
-            show_alert: true
-        });
-
-        return;
-    }
-
-
     // Ownership check server-side — a customer can never manipulate
     // another customer's vehicle by editing the callback_data's car id
-    // manually, since this always re-verifies against their own
-    // customer_id rather than trusting the id alone.
+    // manually, since this always re-verifies the car's OWN joined
+    // customer rather than trusting the id alone.
     const { data: car } = await supabase
         .from("cars")
-        .select("*")
+        .select("*, customers ( telegram_id )")
         .eq("id", carId)
-        .eq("customer_id", customer.id)
         .maybeSingle();
 
 
-    if (!car) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "car_not_linked_to_you"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
             show_alert: true
         });
 
@@ -1482,17 +1452,26 @@ bot.callbackQuery(/^delete_car_execute_(\d+)$/, async (ctx) => {
     const lang = await getLang(ctx);
 
 
-    const { data: customer } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("telegram_id", telegramId)
+    // Re-verify ownership again at the moment of deletion, not just at the
+    // confirm step — via the car's OWN joined customer, same as the
+    // confirm step above, then the delete query itself is ALSO scoped to
+    // that exact verified customer_id, so even a forged callback_data car
+    // id can only ever affect a car genuinely linked to this Telegram
+    // user. (status_history for this car is cleaned up automatically via
+    // the database's ON DELETE CASCADE — verified empirically before this
+    // was implemented, see migrations/ and the FK relationships they
+    // assume.)
+    const { data: car } = await supabase
+        .from("cars")
+        .select("id, company_id, customers ( id, telegram_id )")
+        .eq("id", carId)
         .maybeSingle();
 
 
-    if (!customer) {
+    if (!carBelongsToTelegramUser(car, telegramId)) {
 
         await ctx.answerCallbackQuery({
-            text: t(lang, "customer_not_found"),
+            text: t(lang, "car_not_linked_to_you"),
             show_alert: true
         });
 
@@ -1500,7 +1479,7 @@ bot.callbackQuery(/^delete_car_execute_(\d+)$/, async (ctx) => {
     }
 
 
-    if (await isCompanyArchived(customer.company_id)) {
+    if (await isCompanyArchived(car.company_id)) {
 
         await ctx.answerCallbackQuery({
             text: t(lang, "company_archived"),
@@ -1511,18 +1490,11 @@ bot.callbackQuery(/^delete_car_execute_(\d+)$/, async (ctx) => {
     }
 
 
-    // Re-verify ownership again at the moment of deletion, not just at the
-    // confirm step — the delete query itself is scoped to customer_id, so
-    // even a forged callback_data car id can only ever affect a car that
-    // is genuinely linked to this Telegram user's own customer record.
-    // (status_history for this car is cleaned up automatically via the
-    // database's ON DELETE CASCADE — verified empirically before this was
-    // implemented, see migrations/ and the FK relationships they assume.)
     const { data: deletedRows, error: deleteError } = await supabase
         .from("cars")
         .delete()
         .eq("id", carId)
-        .eq("customer_id", customer.id)
+        .eq("customer_id", car.customers.id)
         .select();
 
 

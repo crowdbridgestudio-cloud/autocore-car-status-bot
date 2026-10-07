@@ -1541,19 +1541,28 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
 
     const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
 
-    const { data: admin } = await supabase
+    let errorMessage = null;
+
+    const { data: admin, error: adminError } = await supabase
         .from("admin_accounts")
         .select("telegram_id")
         .eq("id", req.session.adminId)
         .maybeSingle();
 
+    if (adminError) {
+
+        console.error("telegram-setup: admin_accounts lookup error:", adminError.message);
+
+        errorMessage = at(lang, "telegram_setup_error");
+    }
+
     const botUsername = await getWorkshopBotUsername();
 
     let liveToken = null;
 
-    if (!admin?.telegram_id && botUsername) {
+    if (!errorMessage && !admin?.telegram_id && botUsername) {
 
-        const { data } = await supabase
+        const { data, error: tokenError } = await supabase
             .from("telegram_connect_tokens")
             .select("*")
             .eq("admin_id", req.session.adminId)
@@ -1563,7 +1572,16 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
             .limit(1)
             .maybeSingle();
 
-        liveToken = data;
+        if (tokenError) {
+
+            console.error("telegram-setup: telegram_connect_tokens lookup error:", tokenError.message);
+
+            errorMessage = at(lang, "telegram_setup_error");
+
+        } else {
+
+            liveToken = data;
+        }
     }
 
     let qr = null;
@@ -1611,6 +1629,8 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
 
                     <h1>${at(lang, "telegram_setup_title")}</h1>
 
+                    ${errorMessage ? `<p class="notice-banner error">${errorMessage}</p>` : ""}
+
                     ${!botUsername ? `
                         <p>${at(lang, "telegram_setup_bot_not_configured")}</p>
                     ` : admin?.telegram_id ? `
@@ -1649,16 +1669,25 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
 
 router.post("/telegram-setup/generate", requireLogin, async (req, res) => {
 
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
     // At most one live token per admin — generating a new one makes any
     // prior unconsumed token for this admin unusable, rather than
-    // leaving multiple valid codes floating around.
-    await supabase
+    // leaving multiple valid codes floating around. Non-fatal if this
+    // fails (e.g. nothing to delete yet) — the GET page always picks the
+    // MOST RECENT unconsumed token, so a stray old row left behind here
+    // can't break anything, just logged for visibility.
+    const { error: deleteError } = await supabase
         .from("telegram_connect_tokens")
         .delete()
         .eq("admin_id", req.session.adminId)
         .is("consumed_at", null);
 
-    await supabase
+    if (deleteError) {
+        console.error("telegram-setup/generate: delete error:", deleteError.message);
+    }
+
+    const { error: insertError } = await supabase
         .from("telegram_connect_tokens")
         .insert({
             token: crypto.randomUUID(),
@@ -1666,6 +1695,16 @@ router.post("/telegram-setup/generate", requireLogin, async (req, res) => {
             company_id: req.session.companyId,
             expires_at: new Date(Date.now() + CONNECT_TOKEN_TTL_MS).toISOString()
         });
+
+    if (insertError) {
+
+        console.error("telegram-setup/generate: insert error:", insertError.message);
+
+        return res.send(`
+            <h2>${at(lang, "telegram_setup_error")}</h2>
+            <a href="/admin/telegram-setup">${at(lang, "go_back")}</a>
+        `);
+    }
 
     res.redirect("/admin/telegram-setup");
 });

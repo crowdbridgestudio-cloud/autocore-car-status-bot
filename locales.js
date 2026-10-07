@@ -538,7 +538,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Open your chat with the Workshop Bot and send /start to manage your Workshop and Manager groups.",
         telegram_setup_not_linked_instructions: "Generate a one-time code, then open it on your phone to link your Telegram account.",
         telegram_setup_scan_instructions: "Scan this QR code or tap the link below from your phone. The code expires in 15 minutes.",
-        telegram_setup_generate_button: "Generate connect code"
+        telegram_setup_generate_button: "Generate connect code",
+        telegram_setup_error: "⚠️ Something went wrong loading this page. Please try again or contact support."
     },
 
     pl: {
@@ -605,7 +606,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Otwórz czat z Botem Warsztatowym i wyślij /start, aby zarządzać grupami Warsztat i Manager.",
         telegram_setup_not_linked_instructions: "Wygeneruj jednorazowy kod, a następnie otwórz go na telefonie, aby połączyć swoje konto Telegram.",
         telegram_setup_scan_instructions: "Zeskanuj ten kod QR lub dotknij poniższego linku na telefonie. Kod wygasa po 15 minutach.",
-        telegram_setup_generate_button: "Wygeneruj kod połączenia"
+        telegram_setup_generate_button: "Wygeneruj kod połączenia",
+        telegram_setup_error: "⚠️ Wystąpił błąd podczas ładowania tej strony. Spróbuj ponownie lub skontaktuj się z pomocą techniczną."
     },
 
     de: {
@@ -672,7 +674,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Öffnen Sie Ihren Chat mit dem Werkstatt-Bot und senden Sie /start, um Ihre Werkstatt- und Manager-Gruppen zu verwalten.",
         telegram_setup_not_linked_instructions: "Erstellen Sie einen einmaligen Code und öffnen Sie ihn dann auf Ihrem Telefon, um Ihr Telegram-Konto zu verknüpfen.",
         telegram_setup_scan_instructions: "Scannen Sie diesen QR-Code oder tippen Sie auf den untenstehenden Link auf Ihrem Telefon. Der Code läuft nach 15 Minuten ab.",
-        telegram_setup_generate_button: "Verbindungscode erstellen"
+        telegram_setup_generate_button: "Verbindungscode erstellen",
+        telegram_setup_error: "⚠️ Beim Laden dieser Seite ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut oder kontaktieren Sie den Support."
     },
 
     tr: {
@@ -739,7 +742,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Atölye Botu ile sohbetinizi açın ve Atölye ile Yönetici gruplarınızı yönetmek için /start gönderin.",
         telegram_setup_not_linked_instructions: "Tek kullanımlık bir kod oluşturun, ardından Telegram hesabınızı bağlamak için telefonunuzda açın.",
         telegram_setup_scan_instructions: "Bu QR kodunu tarayın veya telefonunuzdan aşağıdaki bağlantıya dokunun. Kod 15 dakika içinde sona erer.",
-        telegram_setup_generate_button: "Bağlantı kodu oluştur"
+        telegram_setup_generate_button: "Bağlantı kodu oluştur",
+        telegram_setup_error: "⚠️ Bu sayfa yüklenirken bir sorun oluştu. Lütfen tekrar deneyin veya destek ile iletişime geçin."
     },
 
     az: {
@@ -806,7 +810,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Emalatxana Botu ilə söhbətinizi açın və Emalatxana və Menecer qruplarınızı idarə etmək üçün /start göndərin.",
         telegram_setup_not_linked_instructions: "Birdəfəlik kod yaradın, sonra Telegram hesabınızı bağlamaq üçün telefonunuzda açın.",
         telegram_setup_scan_instructions: "Bu QR kodu skan edin və ya telefonunuzdan aşağıdakı linkə toxunun. Kod 15 dəqiqə ərzində etibarsız olur.",
-        telegram_setup_generate_button: "Bağlantı kodu yarat"
+        telegram_setup_generate_button: "Bağlantı kodu yarat",
+        telegram_setup_error: "⚠️ Bu səhifə yüklənərkən xəta baş verdi. Zəhmət olmasa yenidən cəhd edin və ya dəstək xidməti ilə əlaqə saxlayın."
     },
 
     ru: {
@@ -873,7 +878,8 @@ const ADMIN_STRINGS = {
         telegram_setup_linked_instructions: "Откройте чат с Ботом мастерской и отправьте /start, чтобы управлять группами Мастерская и Менеджер.",
         telegram_setup_not_linked_instructions: "Создайте одноразовый код, затем откройте его на телефоне, чтобы подключить аккаунт Telegram.",
         telegram_setup_scan_instructions: "Отсканируйте этот QR-код или нажмите на ссылку ниже с телефона. Код действителен 15 минут.",
-        telegram_setup_generate_button: "Создать код подключения"
+        telegram_setup_generate_button: "Создать код подключения",
+        telegram_setup_error: "⚠️ Не удалось загрузить эту страницу. Попробуйте снова или свяжитесь с поддержкой."
     }
 };
 

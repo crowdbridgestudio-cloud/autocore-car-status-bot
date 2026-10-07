@@ -243,6 +243,469 @@ if (WORKSHOP_BOT_TOKEN) {
 
 
     // ==================================================
+    // OWNER-DRIVEN GROUP CONNECTION
+    // ==================================================
+    // Lets a company's admin link their Telegram account (via a one-time
+    // token minted by the admin panel — see admin.js's
+    // /admin/telegram-setup routes) and then connect their Workshop and
+    // Manager groups directly from Telegram, instead of a developer
+    // inserting rows into workshop_telegram_groups by hand (the only way
+    // this worked before). Authorization is ALWAYS resolved from
+    // admin_accounts.telegram_id — never from anything a client/payload
+    // supplies — so every write below is scoped to whichever company
+    // that lookup returns.
+
+    // In-memory, per-process — same pattern as admin.js's
+    // pendingCarCreations (this app runs as a single Render instance).
+    // Keyed by the Telegram user id who pressed "Connect Workshop/Manager
+    // Group"; consumed by the my_chat_member handler once that same
+    // person adds the bot to a group.
+    const pendingGroupConnections = new Map();
+    const GROUP_CONNECT_INTENT_TTL_MS = 10 * 60 * 1000;
+
+    function pruneExpiredGroupIntents() {
+
+        const now = Date.now();
+
+        for (const [key, entry] of pendingGroupConnections) {
+            if (now - entry.startedAt > GROUP_CONNECT_INTENT_TTL_MS) {
+                pendingGroupConnections.delete(key);
+            }
+        }
+    }
+
+
+    async function getLinkedAdmin(telegramId) {
+
+        const { data } = await supabase
+            .from("admin_accounts")
+            .select("id, company_id, name")
+            .eq("telegram_id", telegramId)
+            .maybeSingle();
+
+        return data || null;
+    }
+
+
+    // Resolved lazily via getMe() and cached for the process lifetime —
+    // never hardcoded, never guessed. The username is public information
+    // Telegram itself returns, not a secret.
+    let cachedOwnUsername = null;
+
+    async function getOwnUsername() {
+
+        if (cachedOwnUsername) return cachedOwnUsername;
+
+        const me = await workshopBot.api.getMe();
+
+        cachedOwnUsername = me.username;
+
+        return cachedOwnUsername;
+    }
+
+
+    function connectGroupsMenuKeyboard() {
+
+        return new InlineKeyboard()
+            .text("🔧 Connect Workshop Group", "connect_workshop_group")
+            .row()
+            .text("👔 Connect Manager Group", "connect_manager_group");
+    }
+
+
+    // Guard shared by both the my_chat_member handler and the existing-
+    // group fallback commands below — never silently reassign a group
+    // that's already connected to a DIFFERENT company.
+    async function workshopGroupBelongsToAnotherCompany(workshopGroupId, companyId) {
+
+        const { data } = await supabase
+            .from("workshop_telegram_groups")
+            .select("company_id")
+            .eq("workshop_group_id", workshopGroupId)
+            .maybeSingle();
+
+        return !!(data && data.company_id !== companyId);
+    }
+
+
+    // An existing workshop group row for this company that already has a
+    // manager_group_id, if any — so connecting a SECOND workshop group
+    // doesn't require re-connecting the Manager Group too.
+    async function existingManagerGroupId(companyId) {
+
+        const { data } = await supabase
+            .from("workshop_telegram_groups")
+            .select("manager_group_id")
+            .eq("company_id", companyId)
+            .not("manager_group_id", "is", null)
+            .limit(1)
+            .maybeSingle();
+
+        return data ? data.manager_group_id : null;
+    }
+
+
+    workshopBot.command("start", async (ctx) => {
+
+        if (ctx.chat.type !== "private") return;
+
+        const telegramId = ctx.from.id;
+        const payload = (ctx.match || "").trim();
+
+        if (payload) {
+
+            // Consume a one-time bridge token minted by the admin panel.
+            const { data: tokenRow } = await supabase
+                .from("telegram_connect_tokens")
+                .select("*")
+                .eq("token", payload)
+                .maybeSingle();
+
+            if (!tokenRow || tokenRow.consumed_at || new Date(tokenRow.expires_at) < new Date()) {
+
+                await ctx.reply("⚠️ This code has expired or was already used. Generate a new one from your AutoCore admin panel (Telegram Groups).");
+
+                return;
+            }
+
+            // A Telegram account can only ever bridge to ONE admin — if
+            // it's already linked to a DIFFERENT admin, refuse rather
+            // than silently reassigning someone else's identity.
+            const { data: existingLink } = await supabase
+                .from("admin_accounts")
+                .select("id")
+                .eq("telegram_id", telegramId)
+                .maybeSingle();
+
+            if (existingLink && existingLink.id !== tokenRow.admin_id) {
+
+                await ctx.reply("⚠️ Your Telegram account is already linked to a different AutoCore admin account.");
+
+                return;
+            }
+
+            await supabase
+                .from("telegram_connect_tokens")
+                .update({ consumed_at: new Date().toISOString() })
+                .eq("id", tokenRow.id);
+
+            if (!existingLink) {
+
+                const { error } = await supabase
+                    .from("admin_accounts")
+                    .update({ telegram_id: telegramId })
+                    .eq("id", tokenRow.admin_id);
+
+                if (error) {
+
+                    console.error("Admin Telegram link error:", error.message);
+
+                    await ctx.reply("⚠️ Could not link your Telegram account. Please try generating a new code.");
+
+                    return;
+                }
+            }
+
+            await ctx.reply(
+                "✅ Your Telegram account is now linked to your AutoCore company. Choose what to connect:",
+                { reply_markup: connectGroupsMenuKeyboard() }
+            );
+
+            return;
+        }
+
+        // No payload — the permanent re-entry point once already linked.
+        const admin = await getLinkedAdmin(telegramId);
+
+        if (!admin) {
+
+            await ctx.reply("Hi! To connect your Workshop and Manager groups, generate a one-time code from your AutoCore admin panel (Telegram Groups) first.");
+
+            return;
+        }
+
+        await ctx.reply("Choose what to connect:", { reply_markup: connectGroupsMenuKeyboard() });
+    });
+
+
+    workshopBot.callbackQuery("connect_workshop_group", async (ctx) => {
+
+        const telegramId = ctx.from.id;
+        const admin = await getLinkedAdmin(telegramId);
+
+        if (!admin) {
+
+            await ctx.answerCallbackQuery({ text: "Your Telegram account isn't linked yet.", show_alert: true });
+
+            return;
+        }
+
+        pruneExpiredGroupIntents();
+        pendingGroupConnections.set(telegramId, { companyId: admin.company_id, purpose: "workshop", startedAt: Date.now() });
+
+        const botUsername = await getOwnUsername();
+
+        await ctx.answerCallbackQuery();
+
+        await ctx.editMessageText(
+            "Tap below, then choose the group to add the bot to:",
+            { reply_markup: new InlineKeyboard().url("➕ Choose Workshop Group", `https://t.me/${botUsername}?startgroup=wsconnect`) }
+        );
+    });
+
+
+    workshopBot.callbackQuery("connect_manager_group", async (ctx) => {
+
+        const telegramId = ctx.from.id;
+        const admin = await getLinkedAdmin(telegramId);
+
+        if (!admin) {
+
+            await ctx.answerCallbackQuery({ text: "Your Telegram account isn't linked yet.", show_alert: true });
+
+            return;
+        }
+
+        const { data: existingWorkshopGroups } = await supabase
+            .from("workshop_telegram_groups")
+            .select("id")
+            .eq("company_id", admin.company_id)
+            .limit(1);
+
+        if (!existingWorkshopGroups || existingWorkshopGroups.length === 0) {
+
+            await ctx.answerCallbackQuery({ text: "Connect a Workshop Group first before connecting the Manager Group.", show_alert: true });
+
+            return;
+        }
+
+        pruneExpiredGroupIntents();
+        pendingGroupConnections.set(telegramId, { companyId: admin.company_id, purpose: "manager", startedAt: Date.now() });
+
+        const botUsername = await getOwnUsername();
+
+        await ctx.answerCallbackQuery();
+
+        await ctx.editMessageText(
+            "Tap below, then choose the group to add the bot to:",
+            { reply_markup: new InlineKeyboard().url("➕ Choose Manager Group", `https://t.me/${botUsername}?startgroup=mgconnect`) }
+        );
+    });
+
+
+    // Fires on any membership change for this bot in any chat — not
+    // privacy-mode-gated, always delivered. Only acts on a genuine
+    // "just added to a group" transition.
+    workshopBot.on("my_chat_member", async (ctx) => {
+
+        const chat = ctx.myChatMember.chat;
+
+        if (chat.type !== "group" && chat.type !== "supergroup") return;
+
+        const oldStatus = ctx.myChatMember.old_chat_member.status;
+        const newStatus = ctx.myChatMember.new_chat_member.status;
+
+        const justAdded =
+            (oldStatus === "left" || oldStatus === "kicked") &&
+            (newStatus === "member" || newStatus === "administrator");
+
+        if (!justAdded) return;
+
+        const adderId = ctx.myChatMember.from.id;
+
+        pruneExpiredGroupIntents();
+
+        const intent = pendingGroupConnections.get(adderId);
+
+        if (!intent) {
+
+            // Added without going through the Connect Groups flow (e.g.
+            // someone re-adding an already-known group) — inform rather
+            // than silently sitting there or auto-leaving, which would
+            // be too aggressive for a case that might be entirely benign.
+            try {
+
+                await ctx.api.sendMessage(
+                    chat.id,
+                    "ℹ️ This bot needs to be connected via the AutoCore admin panel (Telegram Groups) before it can be used here. If it's already connected, nothing further is needed."
+                );
+
+            } catch (sendError) {
+                // Non-fatal — cosmetic only.
+            }
+
+            return;
+        }
+
+        pendingGroupConnections.delete(adderId);
+
+        if (intent.purpose === "workshop") {
+
+            if (await workshopGroupBelongsToAnotherCompany(chat.id, intent.companyId)) {
+
+                await ctx.api.sendMessage(chat.id, "⚠️ This group is already connected to a different company's AutoCore account. Contact support if this is unexpected.");
+
+                return;
+            }
+
+            const managerGroupId = await existingManagerGroupId(intent.companyId);
+
+            const { error } = await supabase
+                .from("workshop_telegram_groups")
+                .upsert(
+                    {
+                        workshop_group_id: chat.id,
+                        company_id: intent.companyId,
+                        manager_group_id: managerGroupId,
+                        is_active: true
+                    },
+                    { onConflict: "workshop_group_id" }
+                );
+
+            if (error) {
+
+                console.error("Workshop group connect error:", error.message);
+
+                await ctx.api.sendMessage(chat.id, "⚠️ Something went wrong saving this group. Please try again.");
+
+                return;
+            }
+
+            await ctx.api.sendMessage(chat.id, "✅ This group is now connected as your Workshop Group.");
+
+        } else if (intent.purpose === "manager") {
+
+            const { error } = await supabase
+                .from("workshop_telegram_groups")
+                .update({ manager_group_id: chat.id })
+                .eq("company_id", intent.companyId);
+
+            if (error) {
+
+                console.error("Manager group connect error:", error.message);
+
+                await ctx.api.sendMessage(chat.id, "⚠️ Something went wrong saving this group. Please try again.");
+
+                return;
+            }
+
+            await ctx.api.sendMessage(chat.id, "✅ This group is now connected as your Manager Group.");
+        }
+    });
+
+
+    // ==================================================
+    // EXISTING-GROUP FALLBACK — /connect_workshop, /connect_manager
+    // ==================================================
+    // For groups the bot is ALREADY a member of (e.g. companies 9 and 58,
+    // set up by hand before this flow existed) — typed directly inside
+    // the group, no startgroup/my_chat_member event needed since the bot
+    // never has to be re-added.
+
+    workshopBot.command("connect_workshop", async (ctx) => {
+
+        if (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") {
+
+            await ctx.reply("Use this command inside the Telegram group you want to connect.");
+
+            return;
+        }
+
+        const admin = await getLinkedAdmin(ctx.from.id);
+
+        if (!admin) {
+
+            await ctx.reply("Your Telegram account isn't linked to an AutoCore admin yet. Generate a connect code from your admin panel (Telegram Groups) first, then message this bot privately.");
+
+            return;
+        }
+
+        const chatId = ctx.chat.id;
+
+        if (await workshopGroupBelongsToAnotherCompany(chatId, admin.company_id)) {
+
+            await ctx.reply("⚠️ This group is already connected to a different company's AutoCore account.");
+
+            return;
+        }
+
+        const managerGroupId = await existingManagerGroupId(admin.company_id);
+
+        const { error } = await supabase
+            .from("workshop_telegram_groups")
+            .upsert(
+                {
+                    workshop_group_id: chatId,
+                    company_id: admin.company_id,
+                    manager_group_id: managerGroupId,
+                    is_active: true
+                },
+                { onConflict: "workshop_group_id" }
+            );
+
+        if (error) {
+
+            console.error("connect_workshop error:", error.message);
+
+            await ctx.reply("⚠️ Something went wrong saving this group. Please try again.");
+
+            return;
+        }
+
+        await ctx.reply("✅ This group is now connected as your Workshop Group.");
+    });
+
+
+    workshopBot.command("connect_manager", async (ctx) => {
+
+        if (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") {
+
+            await ctx.reply("Use this command inside the Telegram group you want to connect.");
+
+            return;
+        }
+
+        const admin = await getLinkedAdmin(ctx.from.id);
+
+        if (!admin) {
+
+            await ctx.reply("Your Telegram account isn't linked to an AutoCore admin yet. Generate a connect code from your admin panel (Telegram Groups) first, then message this bot privately.");
+
+            return;
+        }
+
+        const { data: existingWorkshopGroups } = await supabase
+            .from("workshop_telegram_groups")
+            .select("id")
+            .eq("company_id", admin.company_id)
+            .limit(1);
+
+        if (!existingWorkshopGroups || existingWorkshopGroups.length === 0) {
+
+            await ctx.reply("⚠️ Connect a Workshop Group first (/connect_workshop in that group) before connecting the Manager Group.");
+
+            return;
+        }
+
+        const { error } = await supabase
+            .from("workshop_telegram_groups")
+            .update({ manager_group_id: ctx.chat.id })
+            .eq("company_id", admin.company_id);
+
+        if (error) {
+
+            console.error("connect_manager error:", error.message);
+
+            await ctx.reply("⚠️ Something went wrong saving this group. Please try again.");
+
+            return;
+        }
+
+        await ctx.reply("✅ This group is now connected as your Manager Group.");
+    });
+
+
+    // ==================================================
     // /save <registration>
     // ==================================================
 
@@ -339,6 +802,20 @@ if (WORKSHOP_BOT_TOKEN) {
 
             await ctx.reply(
                 "⚠️ This group isn't set up as a workshop group yet. Ask an admin to configure it.",
+                replyOptions
+            );
+
+            return;
+        }
+
+        // A Workshop Group can now be connected before its Manager Group
+        // (see the owner-driven connect flow above) — this is the only
+        // new state /save needs to handle gracefully; everything else
+        // below is unchanged.
+        if (!groupConfig.manager_group_id) {
+
+            await ctx.reply(
+                "⚠️ This workshop isn't fully set up yet — ask an admin to connect the Manager Group from the AutoCore admin panel.",
                 replyOptions
             );
 
@@ -668,12 +1145,23 @@ function startWorkshopBot() {
     }
 
     workshopBot.api.setMyCommands([
-        { command: "save", description: "Save replied media to a vehicle, e.g. /save EL12345" }
+        { command: "save", description: "Save replied media to a vehicle, e.g. /save EL12345" },
+        { command: "start", description: "Link your account / connect groups (DM only)" },
+        { command: "connect_workshop", description: "Connect this group as a Workshop Group" },
+        { command: "connect_manager", description: "Connect this group as the Manager Group" }
     ]).catch((err) => {
         console.error("Workshop bot setMyCommands failed (non-fatal):", err.message);
     });
 
-    workshopBot.start();
+    // Telegram's documented default (what an unspecified/empty
+    // allowed_updates resolves to) excludes chat_member, message_reaction,
+    // and message_reaction_count — my_chat_member is normally included by
+    // default, but the my_chat_member handler above (owner-driven group
+    // connection) is new and important enough to make this explicit
+    // rather than rely on default behavior.
+    workshopBot.start({
+        allowed_updates: ["message", "callback_query", "my_chat_member"]
+    });
 
     console.log("🔧 Workshop media bot started (long polling).");
 }

@@ -562,6 +562,7 @@ router.get("/", requireLogin, async (req, res) => {
 
                 <div class="header-right">
                     ${renderLanguageSwitcher(lang, "/admin")}
+                    <a class="logout-link" href="/admin/telegram-setup">${at(lang, "nav_telegram_setup")}</a>
                     <a class="logout-link" href="/admin/logout">${at(lang, "logout_button")}</a>
                 </div>
 
@@ -1498,5 +1499,176 @@ router.post("/status", requireLogin, async (req, res) => {
 
     res.redirect("/admin");
 });
+
+
+// ==========================================
+// TELEGRAM GROUP CONNECT — admin-side bridge
+// ==========================================
+// Links this admin's web session to a Telegram account via a one-time
+// token, which the Workshop Bot's /start handler consumes (see
+// workshopBot.js). The actual group-connection UX (picking a Workshop/
+// Manager group) happens entirely inside Telegram after that — this
+// page only ever starts that bridge; it never touches
+// workshop_telegram_groups directly.
+
+const WORKSHOP_BOT_TOKEN = process.env.WORKSHOP_BOT_TOKEN;
+const workshopApiBot = WORKSHOP_BOT_TOKEN ? new Bot(WORKSHOP_BOT_TOKEN) : null;
+
+// Resolved lazily via getMe() (never hardcoded, never guessed) and
+// cached for the life of the process — the username is public info
+// returned by Telegram itself, not a secret, so caching it in memory
+// carries no more risk than the token already being in env vars.
+let cachedWorkshopBotUsername = null;
+
+async function getWorkshopBotUsername() {
+
+    if (!workshopApiBot) return null;
+
+    if (cachedWorkshopBotUsername) return cachedWorkshopBotUsername;
+
+    const me = await workshopApiBot.api.getMe();
+
+    cachedWorkshopBotUsername = me.username;
+
+    return cachedWorkshopBotUsername;
+}
+
+
+const CONNECT_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+
+router.get("/telegram-setup", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const { data: admin } = await supabase
+        .from("admin_accounts")
+        .select("telegram_id")
+        .eq("id", req.session.adminId)
+        .maybeSingle();
+
+    const botUsername = await getWorkshopBotUsername();
+
+    let liveToken = null;
+
+    if (!admin?.telegram_id && botUsername) {
+
+        const { data } = await supabase
+            .from("telegram_connect_tokens")
+            .select("*")
+            .eq("admin_id", req.session.adminId)
+            .is("consumed_at", null)
+            .gt("expires_at", new Date().toISOString())
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        liveToken = data;
+    }
+
+    let qr = null;
+    let telegramLink = null;
+
+    if (liveToken && botUsername) {
+
+        telegramLink = `https://t.me/${botUsername}?start=${liveToken.token}`;
+        qr = await QRCode.toDataURL(telegramLink);
+    }
+
+
+    res.send(`
+        <!DOCTYPE html>
+
+        <html>
+
+        <head>
+
+            <title>${at(lang, "telegram_setup_title")}</title>
+
+            ${HEAD_META}
+
+            <style>
+                ${BASE_STYLES}
+                .qr-img { width: 260px; max-width: 100%; display: block; margin: 12px auto; }
+                .telegram-link { word-break: break-all; background: #f3f4f6; padding: 10px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 16px; }
+            </style>
+
+        </head>
+
+
+        <body>
+
+            <header class="app-header">
+                <div class="brand">🚗 AutoCore</div>
+                <div class="header-right">
+                    ${renderLanguageSwitcher(lang, "/admin/telegram-setup")}
+                </div>
+            </header>
+
+            <div class="container" style="max-width:560px;">
+
+                <div class="card">
+
+                    <h1>${at(lang, "telegram_setup_title")}</h1>
+
+                    ${!botUsername ? `
+                        <p>${at(lang, "telegram_setup_bot_not_configured")}</p>
+                    ` : admin?.telegram_id ? `
+                        <p class="notice-banner success">${at(lang, "telegram_setup_linked")}</p>
+                        <p>${at(lang, "telegram_setup_linked_instructions")}</p>
+                    ` : liveToken ? `
+                        <p>${at(lang, "telegram_setup_scan_instructions")}</p>
+                        <img class="qr-img" src="${qr}" />
+                        <p class="telegram-link">${telegramLink}</p>
+                        <form method="POST" action="/admin/telegram-setup/generate">
+                            <button class="btn btn-outline btn-block">${at(lang, "telegram_setup_generate_button")}</button>
+                        </form>
+                    ` : `
+                        <p>${at(lang, "telegram_setup_not_linked_instructions")}</p>
+                        <form method="POST" action="/admin/telegram-setup/generate">
+                            <button class="btn btn-primary btn-block">${at(lang, "telegram_setup_generate_button")}</button>
+                        </form>
+                    `}
+
+                    <a href="/admin" class="btn btn-outline btn-block" style="margin-top:12px;">
+                        ${at(lang, "back_to_admin")}
+                    </a>
+
+                </div>
+
+            </div>
+
+            ${DOUBLE_SUBMIT_GUARD_SCRIPT}
+
+        </body>
+
+        </html>
+    `);
+});
+
+
+router.post("/telegram-setup/generate", requireLogin, async (req, res) => {
+
+    // At most one live token per admin — generating a new one makes any
+    // prior unconsumed token for this admin unusable, rather than
+    // leaving multiple valid codes floating around.
+    await supabase
+        .from("telegram_connect_tokens")
+        .delete()
+        .eq("admin_id", req.session.adminId)
+        .is("consumed_at", null);
+
+    await supabase
+        .from("telegram_connect_tokens")
+        .insert({
+            token: crypto.randomUUID(),
+            admin_id: req.session.adminId,
+            company_id: req.session.companyId,
+            expires_at: new Date(Date.now() + CONNECT_TOKEN_TTL_MS).toISOString()
+        });
+
+    res.redirect("/admin/telegram-setup");
+});
+
 
 module.exports = router;

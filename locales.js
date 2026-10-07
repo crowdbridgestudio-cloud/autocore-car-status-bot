@@ -530,7 +530,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Edit customer",
         edit_customer_title: "✏️ Edit customer",
         save_button: "💾 Save",
-        customer_update_error_title: "❌ Could not update customer"
+        customer_update_error_title: "❌ Could not update customer",
+        nav_telegram_setup: "📱 Telegram Groups",
+        telegram_setup_title: "📱 Connect Telegram Groups",
+        telegram_setup_bot_not_configured: "⚠️ The Workshop Bot isn't configured on this server yet. Contact support.",
+        telegram_setup_linked: "✅ Your Telegram account is linked.",
+        telegram_setup_linked_instructions: "Open your chat with the Workshop Bot and send /start to manage your Workshop and Manager groups.",
+        telegram_setup_not_linked_instructions: "Generate a one-time code, then open it on your phone to link your Telegram account.",
+        telegram_setup_scan_instructions: "Scan this QR code or tap the link below from your phone. The code expires in 15 minutes.",
+        telegram_setup_generate_button: "Generate connect code"
     },
 
     pl: {
@@ -589,7 +597,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Edytuj klienta",
         edit_customer_title: "✏️ Edytuj klienta",
         save_button: "💾 Zapisz",
-        customer_update_error_title: "❌ Nie udało się zaktualizować klienta"
+        customer_update_error_title: "❌ Nie udało się zaktualizować klienta",
+        nav_telegram_setup: "📱 Grupy Telegram",
+        telegram_setup_title: "📱 Połącz grupy Telegram",
+        telegram_setup_bot_not_configured: "⚠️ Bot warsztatowy nie jest jeszcze skonfigurowany na tym serwerze. Skontaktuj się z pomocą techniczną.",
+        telegram_setup_linked: "✅ Twoje konto Telegram jest połączone.",
+        telegram_setup_linked_instructions: "Otwórz czat z Botem Warsztatowym i wyślij /start, aby zarządzać grupami Warsztat i Manager.",
+        telegram_setup_not_linked_instructions: "Wygeneruj jednorazowy kod, a następnie otwórz go na telefonie, aby połączyć swoje konto Telegram.",
+        telegram_setup_scan_instructions: "Zeskanuj ten kod QR lub dotknij poniższego linku na telefonie. Kod wygasa po 15 minutach.",
+        telegram_setup_generate_button: "Wygeneruj kod połączenia"
     },
 
     de: {
@@ -648,7 +664,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Kunde bearbeiten",
         edit_customer_title: "✏️ Kunde bearbeiten",
         save_button: "💾 Speichern",
-        customer_update_error_title: "❌ Kunde konnte nicht aktualisiert werden"
+        customer_update_error_title: "❌ Kunde konnte nicht aktualisiert werden",
+        nav_telegram_setup: "📱 Telegram-Gruppen",
+        telegram_setup_title: "📱 Telegram-Gruppen verbinden",
+        telegram_setup_bot_not_configured: "⚠️ Der Werkstatt-Bot ist auf diesem Server noch nicht konfiguriert. Bitte kontaktieren Sie den Support.",
+        telegram_setup_linked: "✅ Ihr Telegram-Konto ist verknüpft.",
+        telegram_setup_linked_instructions: "Öffnen Sie Ihren Chat mit dem Werkstatt-Bot und senden Sie /start, um Ihre Werkstatt- und Manager-Gruppen zu verwalten.",
+        telegram_setup_not_linked_instructions: "Erstellen Sie einen einmaligen Code und öffnen Sie ihn dann auf Ihrem Telefon, um Ihr Telegram-Konto zu verknüpfen.",
+        telegram_setup_scan_instructions: "Scannen Sie diesen QR-Code oder tippen Sie auf den untenstehenden Link auf Ihrem Telefon. Der Code läuft nach 15 Minuten ab.",
+        telegram_setup_generate_button: "Verbindungscode erstellen"
     },
 
     tr: {
@@ -707,7 +731,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Müşteriyi düzenle",
         edit_customer_title: "✏️ Müşteriyi düzenle",
         save_button: "💾 Kaydet",
-        customer_update_error_title: "❌ Müşteri güncellenemedi"
+        customer_update_error_title: "❌ Müşteri güncellenemedi",
+        nav_telegram_setup: "📱 Telegram Grupları",
+        telegram_setup_title: "📱 Telegram Gruplarını Bağla",
+        telegram_setup_bot_not_configured: "⚠️ Atölye Botu bu sunucuda henüz yapılandırılmadı. Lütfen destek ile iletişime geçin.",
+        telegram_setup_linked: "✅ Telegram hesabınız bağlandı.",
+        telegram_setup_linked_instructions: "Atölye Botu ile sohbetinizi açın ve Atölye ile Yönetici gruplarınızı yönetmek için /start gönderin.",
+        telegram_setup_not_linked_instructions: "Tek kullanımlık bir kod oluşturun, ardından Telegram hesabınızı bağlamak için telefonunuzda açın.",
+        telegram_setup_scan_instructions: "Bu QR kodunu tarayın veya telefonunuzdan aşağıdaki bağlantıya dokunun. Kod 15 dakika içinde sona erer.",
+        telegram_setup_generate_button: "Bağlantı kodu oluştur"
     },
 
     az: {
@@ -766,7 +798,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Müştərini redaktə et",
         edit_customer_title: "✏️ Müştərini redaktə et",
         save_button: "💾 Yadda saxla",
-        customer_update_error_title: "❌ Müştəri yenilənmədi"
+        customer_update_error_title: "❌ Müştəri yenilənmədi",
+        nav_telegram_setup: "📱 Telegram Qrupları",
+        telegram_setup_title: "📱 Telegram Qruplarını Bağla",
+        telegram_setup_bot_not_configured: "⚠️ Emalatxana Botu bu serverdə hələ konfiqurasiya edilməyib. Zəhmət olmasa dəstək xidməti ilə əlaqə saxlayın.",
+        telegram_setup_linked: "✅ Telegram hesabınız bağlandı.",
+        telegram_setup_linked_instructions: "Emalatxana Botu ilə söhbətinizi açın və Emalatxana və Menecer qruplarınızı idarə etmək üçün /start göndərin.",
+        telegram_setup_not_linked_instructions: "Birdəfəlik kod yaradın, sonra Telegram hesabınızı bağlamaq üçün telefonunuzda açın.",
+        telegram_setup_scan_instructions: "Bu QR kodu skan edin və ya telefonunuzdan aşağıdakı linkə toxunun. Kod 15 dəqiqə ərzində etibarsız olur.",
+        telegram_setup_generate_button: "Bağlantı kodu yarat"
     },
 
     ru: {
@@ -825,7 +865,15 @@ const ADMIN_STRINGS = {
         edit_customer_link: "✏️ Редактировать клиента",
         edit_customer_title: "✏️ Редактировать клиента",
         save_button: "💾 Сохранить",
-        customer_update_error_title: "❌ Не удалось обновить клиента"
+        customer_update_error_title: "❌ Не удалось обновить клиента",
+        nav_telegram_setup: "📱 Группы Telegram",
+        telegram_setup_title: "📱 Подключить группы Telegram",
+        telegram_setup_bot_not_configured: "⚠️ Бот мастерской ещё не настроен на этом сервере. Свяжитесь с поддержкой.",
+        telegram_setup_linked: "✅ Ваш аккаунт Telegram подключён.",
+        telegram_setup_linked_instructions: "Откройте чат с Ботом мастерской и отправьте /start, чтобы управлять группами Мастерская и Менеджер.",
+        telegram_setup_not_linked_instructions: "Создайте одноразовый код, затем откройте его на телефоне, чтобы подключить аккаунт Telegram.",
+        telegram_setup_scan_instructions: "Отсканируйте этот QR-код или нажмите на ссылку ниже с телефона. Код действителен 15 минут.",
+        telegram_setup_generate_button: "Создать код подключения"
     }
 };
 

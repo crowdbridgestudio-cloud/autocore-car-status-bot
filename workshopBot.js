@@ -709,9 +709,178 @@ if (WORKSHOP_BOT_TOKEN) {
     // /save <registration>
     // ==================================================
 
+    // ==================================================
+    // /save VEHICLE PICKER — shared state
+    // ==================================================
+    // Lets a mechanic send bare `/save` (no registration) and pick from
+    // their workshop's recent vehicles instead of typing a plate. Both
+    // Maps are in-memory/per-process (same pattern as the group-connect
+    // feature's pendingGroupConnections) — no schema change needed.
+    // Keyed by `${groupId}:${mechanicId}`, never just groupId, so two
+    // mechanics saving in the same group at once never collide or
+    // overwrite each other's in-progress pick or remembered vehicle.
+
+    const pendingSaveTargets = new Map();
+    const SAVE_INTENT_TTL_MS = 10 * 60 * 1000; // plenty of time to tap a picker button
+
+    function pruneExpiredSaveIntents() {
+
+        const now = Date.now();
+
+        for (const [key, entry] of pendingSaveTargets) {
+            if (now - entry.startedAt > SAVE_INTENT_TTL_MS) {
+                pendingSaveTargets.delete(key);
+            }
+        }
+    }
+
+
+    // "Temporary" is interpreted generously (a work-session scale, not a
+    // single message) — long enough that a mechanic saving several
+    // photos of the same car over a few hours never has to re-pick, short
+    // enough that a stale pick from days ago doesn't linger forever.
+    const currentVehicleByMechanic = new Map();
+    const CURRENT_VEHICLE_TTL_MS = 12 * 60 * 60 * 1000;
+
+    function pruneExpiredCurrentVehicles() {
+
+        const now = Date.now();
+
+        for (const [key, entry] of currentVehicleByMechanic) {
+            if (now - entry.setAt > CURRENT_VEHICLE_TTL_MS) {
+                currentVehicleByMechanic.delete(key);
+            }
+        }
+    }
+
+
+    function mechanicKey(groupId, mechanicId) {
+        return `${groupId}:${mechanicId}`;
+    }
+
+
+    // The actual save — copy into the manager group, record saved_media,
+    // post the manager metadata message, confirm. Identical to the
+    // original /save's tail in every respect (same fields, same error
+    // messages, same "Send to customer" button); only extracted so the
+    // three entry points below (explicit registration, remembered
+    // current vehicle, picker tap) don't duplicate it. Always ends by
+    // offering "🔄 Change vehicle" so any successful save — including an
+    // explicit /save REGISTRATION — can seed or reset the remembered
+    // shortcut for next time.
+    async function saveMediaToVehicle({ ctx, groupConfig, vehicle, sourceMessageId, mediaInfo, savedByName, replyOptions, isCallback }) {
+
+        const groupId = ctx.chat.id;
+
+        const respond = async (text, extra) => {
+            if (isCallback) {
+                await ctx.editMessageText(text, extra);
+            } else {
+                await ctx.reply(text, { ...replyOptions, ...extra });
+            }
+        };
+
+        // Copy (not forward) the original content into the manager group
+        // — copyMessage doesn't carry a "Forwarded from" tag, which reads
+        // cleaner in a manager-facing group.
+        let copiedMessage;
+
+        try {
+
+            copiedMessage = await ctx.api.copyMessage(
+                groupConfig.manager_group_id,
+                groupId,
+                sourceMessageId
+            );
+
+        } catch (copyError) {
+
+            console.error("copyMessage to manager group failed:", copyError.message);
+
+            await respond("⚠️ Could not forward this to the manager group. Make sure the bot is still a member there.");
+
+            return;
+        }
+
+
+        const { data: savedRow, error: insertError } = await supabase
+            .from("saved_media")
+            .insert({
+                company_id: groupConfig.company_id,
+                vehicle_id: vehicle.id,
+                source_chat_id: groupId,
+                source_message_id: sourceMessageId,
+                manager_chat_id: groupConfig.manager_group_id,
+                manager_message_id: copiedMessage.message_id,
+                saved_by_telegram_user_id: ctx.from.id,
+                saved_by_name: savedByName,
+                media_type: mediaInfo.media_type,
+                workshop_file_id: mediaInfo.workshop_file_id,
+                caption: mediaInfo.caption,
+                text_content: mediaInfo.text_content
+            })
+            .select()
+            .single();
+
+        if (insertError) {
+
+            console.error("saved_media insert error:", insertError.message);
+
+            // The content is already in the manager group at this point,
+            // but without a row there's no id for the "Send to customer"
+            // button to reference — flag it clearly rather than silently
+            // posting a button that can never work.
+            await respond("⚠️ Saved to the manager group, but there was a problem recording it, so \"Send to customer\" may not work. Please tell an admin.");
+
+            return;
+        }
+
+
+        // Every field here comes from `vehicle.customers` — the same
+        // company-scoped row fetched above — never a fresh lookup, so a
+        // manager can never see another customer's (let alone another
+        // company's) phone or Telegram ID by any accident here.
+        const customerPhoneLine = vehicle.customers?.phone || "Not provided";
+        const customerTelegramLine = vehicle.customers?.telegram_id || "Not connected";
+
+        const metadataText =
+            `🚗 *${vehicle.brand} ${vehicle.model}* (${vehicle.registration || "-"})\n\n` +
+            `👤 Customer: ${vehicle.customers?.name || "No customer on file"}\n` +
+            `📱 Phone: ${customerPhoneLine}\n` +
+            `💬 Telegram ID: ${customerTelegramLine}\n\n` +
+            `💾 Saved by: ${savedByName}\n` +
+            `🕐 ${new Date(savedRow.saved_at).toLocaleString()}`;
+
+        try {
+
+            await ctx.api.sendMessage(
+                groupConfig.manager_group_id,
+                metadataText,
+                {
+                    parse_mode: "Markdown",
+                    reply_to_message_id: copiedMessage.message_id,
+                    reply_markup: new InlineKeyboard()
+                        .text("📤 Send to customer", `send_customer_${savedRow.id}`)
+                }
+            );
+
+        } catch (metaError) {
+
+            console.error("Failed to send metadata message to manager group:", metaError.message);
+        }
+
+
+        await respond(
+            `✅ Saved to ${vehicle.registration || `${vehicle.brand} ${vehicle.model}`} and sent to the manager group.`,
+            { reply_markup: new InlineKeyboard().text("🔄 Change vehicle", "change_vehicle") }
+        );
+    }
+
+
     workshopBot.command("save", async (ctx) => {
 
         const groupId = ctx.chat.id;
+        const mechanicId = ctx.from.id;
 
         // Telegram represents "this message replies to X" in one of two
         // ways. The classic `reply_to_message` (a full Message) is only
@@ -739,7 +908,7 @@ if (WORKSHOP_BOT_TOKEN) {
         if (!replied) {
 
             await ctx.reply(
-                "⚠️ Reply to the photo, video, or message you want to save, then send /save <registration>.\n\nExample: /save EL12345",
+                "⚠️ Reply to the photo, video, or message you want to save, then send /save (or /save <registration>).\n\nExample: /save or /save EL12345",
                 replyOptions
             );
 
@@ -757,17 +926,6 @@ if (WORKSHOP_BOT_TOKEN) {
 
             await ctx.reply(
                 "⚠️ Could not identify the message you replied to. Please try again.",
-                replyOptions
-            );
-
-            return;
-        }
-
-
-        if (!registrationInput) {
-
-            await ctx.reply(
-                "⚠️ Please include the vehicle's registration number.\n\nExample: /save EL12345",
                 replyOptions
             );
 
@@ -824,7 +982,9 @@ if (WORKSHOP_BOT_TOKEN) {
 
 
         // Already saved? Don't re-copy into the manager group and spam
-        // it a second time for the same original message.
+        // it a second time for the same original message — checked
+        // before branching on registration vs. bare /save, since it
+        // applies equally to both.
         const { data: existing } = await supabase
             .from("saved_media")
             .select("id, saved_at")
@@ -843,149 +1003,228 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
 
-        // Vehicle lookup — scoped to this group's company_id only. The
-        // customer (name/phone/telegram_id) comes from THIS SAME
-        // company-scoped row via the join, never a separate lookup, so
-        // there's no way for it to resolve to another company's customer.
-        const { data: vehicle, error: vehicleError } = await supabase
-            .from("cars")
-            .select("*, customers ( id, name, phone, telegram_id )")
-            .eq("company_id", groupConfig.company_id)
-            .ilike("registration", registrationInput)
-            .maybeSingle();
-
-        if (vehicleError) {
-
-            console.error("Vehicle lookup error:", vehicleError.message);
-
-            await ctx.reply(
-                "⚠️ Something went wrong looking up that vehicle. Please try again.",
-                replyOptions
-            );
-
-            return;
-        }
-
-        if (!vehicle) {
-
-            await ctx.reply(
-                `❌ No vehicle found with registration "${registrationInput}" for this workshop.`,
-                replyOptions
-            );
-
-            return;
-        }
-
-
-        // Copy (not forward) the original content into the manager group
-        // — copyMessage doesn't carry a "Forwarded from" tag, which reads
-        // cleaner in a manager-facing group.
-        let copiedMessage;
-
-        try {
-
-            copiedMessage = await ctx.api.copyMessage(
-                groupConfig.manager_group_id,
-                groupId,
-                sourceMessageId
-            );
-
-        } catch (copyError) {
-
-            console.error("copyMessage to manager group failed:", copyError.message);
-
-            await ctx.reply(
-                "⚠️ Could not forward this to the manager group. Make sure the bot is still a member there.",
-                replyOptions
-            );
-
-            return;
-        }
-
-
         const savedByName = displayName(ctx.from);
 
         // Captured from the ORIGINAL reply source (not copiedMessage,
         // which is only ever { message_id } — see extractMediaInfo's
-        // comment). ctx.message.quote?.text is the best-effort fallback
-        // for plain text when the source came via external_reply, which
-        // never carries a .text field of its own.
+        // comment above). ctx.message.quote?.text is the best-effort
+        // fallback for plain text when the source came via
+        // external_reply, which never carries a .text field of its own.
         const mediaInfo = extractMediaInfo(replied, ctx.message.quote?.text);
 
 
-        const { data: savedRow, error: insertError } = await supabase
-            .from("saved_media")
-            .insert({
-                company_id: groupConfig.company_id,
-                vehicle_id: vehicle.id,
-                source_chat_id: groupId,
-                source_message_id: sourceMessageId,
-                manager_chat_id: groupConfig.manager_group_id,
-                manager_message_id: copiedMessage.message_id,
-                saved_by_telegram_user_id: ctx.from.id,
-                saved_by_name: savedByName,
-                media_type: mediaInfo.media_type,
-                workshop_file_id: mediaInfo.workshop_file_id,
-                caption: mediaInfo.caption,
-                text_content: mediaInfo.text_content
-            })
-            .select()
-            .single();
+        if (registrationInput) {
 
-        if (insertError) {
+            // Explicit registration — unchanged, fully backward compatible.
+            const { data: vehicle, error: vehicleError } = await supabase
+                .from("cars")
+                .select("*, customers ( id, name, phone, telegram_id )")
+                .eq("company_id", groupConfig.company_id)
+                .ilike("registration", registrationInput)
+                .maybeSingle();
 
-            console.error("saved_media insert error:", insertError.message);
+            if (vehicleError) {
 
-            // The content is already in the manager group at this point,
-            // but without a row there's no id for the "Send to customer"
-            // button to reference — flag it clearly rather than silently
-            // posting a button that can never work.
+                console.error("Vehicle lookup error:", vehicleError.message);
+
+                await ctx.reply(
+                    "⚠️ Something went wrong looking up that vehicle. Please try again.",
+                    replyOptions
+                );
+
+                return;
+            }
+
+            if (!vehicle) {
+
+                await ctx.reply(
+                    `❌ No vehicle found with registration "${registrationInput}" for this workshop.`,
+                    replyOptions
+                );
+
+                return;
+            }
+
+            await saveMediaToVehicle({ ctx, groupConfig, vehicle, sourceMessageId, mediaInfo, savedByName, replyOptions });
+
+            return;
+        }
+
+
+        // Bare /save — try the remembered current vehicle for this
+        // (group, mechanic) first.
+        const key = mechanicKey(groupId, mechanicId);
+
+        pruneExpiredCurrentVehicles();
+
+        const remembered = currentVehicleByMechanic.get(key);
+
+        if (remembered) {
+
+            // Defensive re-check, same as every other company-scoped
+            // lookup in this file — never trust a remembered id alone,
+            // in case the vehicle was deleted or (in principle) moved
+            // since it was picked.
+            const { data: vehicle } = await supabase
+                .from("cars")
+                .select("*, customers ( id, name, phone, telegram_id )")
+                .eq("id", remembered.carId)
+                .eq("company_id", groupConfig.company_id)
+                .maybeSingle();
+
+            if (vehicle) {
+
+                await saveMediaToVehicle({ ctx, groupConfig, vehicle, sourceMessageId, mediaInfo, savedByName, replyOptions });
+
+                return;
+            }
+
+            // No longer valid — fall through to the picker instead of
+            // silently failing, and clear the stale memory.
+            currentVehicleByMechanic.delete(key);
+        }
+
+
+        // No current vehicle — show the 8 most recently updated active
+        // vehicles for this company. Delivered/cancelled are excluded by
+        // default (unlikely a mechanic needs to attach new media to a
+        // vehicle that's already left).
+        const { data: recentVehicles, error: recentError } = await supabase
+            .from("cars")
+            .select("id, brand, model, registration, status")
+            .eq("company_id", groupConfig.company_id)
+            .not("status", "in", "(delivered,cancelled)")
+            .order("updated_at", { ascending: false })
+            .limit(8);
+
+        if (recentError) {
+
+            console.error("Recent vehicles lookup error:", recentError.message);
+
             await ctx.reply(
-                "⚠️ Saved to the manager group, but there was a problem recording it, so \"Send to customer\" may not work. Please tell an admin.",
+                "⚠️ Something went wrong looking up vehicles. Please try /save <registration> instead.",
                 replyOptions
             );
 
             return;
         }
 
+        if (!recentVehicles || recentVehicles.length === 0) {
 
-        // Every field here comes from `vehicle.customers` — the same
-        // company-scoped row fetched above — never a fresh lookup, so a
-        // manager can never see another customer's (let alone another
-        // company's) phone or Telegram ID by any accident here.
-        const customerPhoneLine = vehicle.customers?.phone || "Not provided";
-        const customerTelegramLine = vehicle.customers?.telegram_id || "Not connected";
+            await ctx.reply(
+                "❌ No active vehicles found for this workshop.\n\nUse /save <registration> if you know the exact plate.",
+                replyOptions
+            );
 
-        const metadataText =
-            `🚗 *${vehicle.brand} ${vehicle.model}* (${vehicle.registration || registrationInput})\n\n` +
-            `👤 Customer: ${vehicle.customers?.name || "No customer on file"}\n` +
-            `📱 Phone: ${customerPhoneLine}\n` +
-            `💬 Telegram ID: ${customerTelegramLine}\n\n` +
-            `💾 Saved by: ${savedByName}\n` +
-            `🕐 ${new Date(savedRow.saved_at).toLocaleString()}`;
+            return;
+        }
+
+        pruneExpiredSaveIntents();
+        pendingSaveTargets.set(key, { groupConfig, sourceMessageId, mediaInfo, savedByName, startedAt: Date.now() });
+
+        const pickerKeyboard = new InlineKeyboard();
+
+        for (const v of recentVehicles) {
+            pickerKeyboard.text(`${v.brand} ${v.model} — ${v.registration || "?"}`, `savepick_${v.id}`).row();
+        }
+
+        await ctx.reply(
+            "🚗 Which vehicle is this for?\n\nNot listed? Use /save <registration>",
+            { ...replyOptions, reply_markup: pickerKeyboard }
+        );
+    });
+
+
+    workshopBot.callbackQuery(/^savepick_(\d+)$/, async (ctx) => {
+
+        const groupId = ctx.chat.id;
+        const mechanicId = ctx.from.id;
+        const carId = ctx.match[1];
+        const key = mechanicKey(groupId, mechanicId);
+
+        pruneExpiredSaveIntents();
+
+        const intent = pendingSaveTargets.get(key);
+
+        if (!intent) {
+
+            await ctx.answerCallbackQuery({ text: "⚠️ This selection expired. Please /save again.", show_alert: true });
+
+            return;
+        }
+
+        // Defense in depth: the picker itself only ever listed this
+        // company's vehicles, but re-verify the tapped id is still
+        // scoped to the SAME company before touching anything — a
+        // forged callback_data can never reach another company's car.
+        const { data: vehicle, error: vehicleError } = await supabase
+            .from("cars")
+            .select("*, customers ( id, name, phone, telegram_id )")
+            .eq("id", carId)
+            .eq("company_id", intent.groupConfig.company_id)
+            .maybeSingle();
+
+        if (vehicleError || !vehicle) {
+
+            await ctx.answerCallbackQuery({ text: "❌ Vehicle not found or no longer available.", show_alert: true });
+
+            return;
+        }
+
+        pendingSaveTargets.delete(key);
+
+        currentVehicleByMechanic.set(key, { carId: vehicle.id, setAt: Date.now() });
+
+        await ctx.answerCallbackQuery();
+
+        await saveMediaToVehicle({
+            ctx,
+            groupConfig: intent.groupConfig,
+            vehicle,
+            sourceMessageId: intent.sourceMessageId,
+            mediaInfo: intent.mediaInfo,
+            savedByName: intent.savedByName,
+            isCallback: true
+        });
+    });
+
+
+    workshopBot.callbackQuery("change_vehicle", async (ctx) => {
+
+        const key = mechanicKey(ctx.chat.id, ctx.from.id);
+
+        currentVehicleByMechanic.delete(key);
+
+        await ctx.answerCallbackQuery({ text: "Current vehicle cleared." });
 
         try {
 
-            await ctx.api.sendMessage(
-                groupConfig.manager_group_id,
-                metadataText,
-                {
-                    parse_mode: "Markdown",
-                    reply_to_message_id: copiedMessage.message_id,
-                    reply_markup: new InlineKeyboard()
-                        .text("📤 Send to customer", `send_customer_${savedRow.id}`)
-                }
-            );
+            await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
 
-        } catch (metaError) {
+        } catch (editError) {
+            // Non-fatal — cosmetic only.
+        }
+    });
 
-            console.error("Failed to send metadata message to manager group:", metaError.message);
+
+    workshopBot.command("change_vehicle", async (ctx) => {
+
+        if (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") {
+
+            await ctx.reply("Use this command inside your workshop group.");
+
+            return;
         }
 
+        const key = mechanicKey(ctx.chat.id, ctx.from.id);
+        const had = currentVehicleByMechanic.has(key);
+
+        currentVehicleByMechanic.delete(key);
 
         await ctx.reply(
-            `✅ Saved to ${vehicle.registration || registrationInput} and sent to the manager group.`,
-            replyOptions
+            had
+                ? "✅ Current vehicle cleared. Reply to a photo and send /save to pick a new one."
+                : "ℹ️ You don't have a current vehicle set. Reply to a photo and send /save to pick one."
         );
     });
 
@@ -1145,7 +1384,8 @@ function startWorkshopBot() {
     }
 
     workshopBot.api.setMyCommands([
-        { command: "save", description: "Save replied media to a vehicle, e.g. /save EL12345" },
+        { command: "save", description: "Save replied media — pick a vehicle, or /save EL12345" },
+        { command: "change_vehicle", description: "Clear your remembered current vehicle" },
         { command: "start", description: "Link your account / connect groups (DM only)" },
         { command: "connect_workshop", description: "Connect this group as a Workshop Group" },
         { command: "connect_manager", description: "Connect this group as the Manager Group" }

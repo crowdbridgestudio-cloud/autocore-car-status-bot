@@ -849,11 +849,39 @@ router.post("/add-car", requireLogin, async (req, res) => {
 
     // Picking an existing customer always wins over the new-customer
     // fields, even if both were somehow submitted — the dropdown holds
-    // only this company's own customers (see the GET handler above), so
-    // it's the safer of the two to prefer.
-    let resolvedCustomerId = customer_id || null;
+    // only this company's own customers (see the GET handler above), but
+    // a POST can be crafted directly, so customer_id is NEVER trusted
+    // as-is: it's re-verified against req.session.companyId below, the
+    // same company-scoped lookup pattern already used by
+    // POST /customer/:id/edit and every other mutation route in this
+    // file. Without this, a forged customer_id belonging to a different
+    // company would silently attach that company's real customer (name,
+    // phone, Telegram ID) to this company's new car.
+    let resolvedCustomerId = null;
 
-    if (!resolvedCustomerId && new_customer_name && new_customer_name.trim()) {
+    if (customer_id) {
+
+        const { data: existingCustomer, error: customerLookupError } = await supabase
+            .from("customers")
+            .select("id")
+            .eq("id", customer_id)
+            .eq("company_id", req.session.companyId)
+            .maybeSingle();
+
+        if (customerLookupError || !existingCustomer) {
+
+            if (idempotencyKey) pendingCarCreations.delete(idempotencyKey);
+
+            return res.send(`
+                <h2>${at(lang, "car_create_error_title")}</h2>
+                <p>${at(lang, "invalid_customer_selection")}</p>
+                <a href="/admin/add-car">${at(lang, "go_back")}</a>
+            `);
+        }
+
+        resolvedCustomerId = existingCustomer.id;
+
+    } else if (new_customer_name && new_customer_name.trim()) {
 
         const { data: newCustomer, error: customerError } = await supabase
             .from("customers")

@@ -1373,6 +1373,23 @@ router.post("/status", requireLogin, async (req, res) => {
     } = req.body;
 
 
+    // The <select> on both the dashboard and the QR page only ever offers
+    // these 9 values, but a POST can be crafted directly — never trust it
+    // as-is. Same reasoning as /add-car's customer_id re-verification:
+    // without this, an arbitrary string would be written straight to
+    // cars.status and status_history.new_status, silently breaking
+    // statusLabel()'s display fallback and any later logic that matches
+    // on an exact status string.
+    if (!STATUS_KEYS.includes(status)) {
+
+        return res.send(`
+            <h2>${at(lang, "status_update_error_title")}</h2>
+            <p>${at(lang, "invalid_status_selection")}</p>
+            <a href="/admin">${at(lang, "go_back")}</a>
+        `);
+    }
+
+
     // --------------------------------------
     // GET CAR + CUSTOMER
     // --------------------------------------

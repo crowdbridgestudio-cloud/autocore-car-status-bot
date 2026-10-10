@@ -30,6 +30,27 @@ let workshopBot = null;
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // Telegram Bot API's own file-download ceiling
 
 
+// Hoisted to module scope (rather than defined inside the
+// `if (WORKSHOP_BOT_TOKEN)` block below, where every other handler lives)
+// because it depends only on `supabase`, never on the bot/token — this is
+// a pure DB-query guard. Keeping it reachable without a live token is what
+// lets it be exported and exercised directly by a test (see
+// test-security-fixes.js), without constructing a Bot instance or starting
+// polling. Both call sites below still invoke this exact function via
+// normal lexical scoping — nothing about when or how it runs changes.
+async function managerGroupBelongsToAnotherCompany(managerGroupId, companyId) {
+
+    const { data } = await supabase
+        .from("workshop_telegram_groups")
+        .select("company_id")
+        .eq("manager_group_id", managerGroupId)
+        .neq("company_id", companyId)
+        .limit(1);
+
+    return !!(data && data.length > 0);
+}
+
+
 if (WORKSHOP_BOT_TOKEN) {
 
     workshopBot = new Bot(WORKSHOP_BOT_TOKEN);
@@ -575,6 +596,13 @@ if (WORKSHOP_BOT_TOKEN) {
 
         } else if (intent.purpose === "manager") {
 
+            if (await managerGroupBelongsToAnotherCompany(chat.id, intent.companyId)) {
+
+                await ctx.api.sendMessage(chat.id, "⚠️ This group is already connected as a different company's Manager Group. Contact support if this is unexpected.");
+
+                return;
+            }
+
             const { error } = await supabase
                 .from("workshop_telegram_groups")
                 .update({ manager_group_id: chat.id })
@@ -683,6 +711,13 @@ if (WORKSHOP_BOT_TOKEN) {
         if (!existingWorkshopGroups || existingWorkshopGroups.length === 0) {
 
             await ctx.reply("⚠️ Connect a Workshop Group first (/connect_workshop in that group) before connecting the Manager Group.");
+
+            return;
+        }
+
+        if (await managerGroupBelongsToAnotherCompany(ctx.chat.id, admin.company_id)) {
+
+            await ctx.reply("⚠️ This group is already connected as a different company's Manager Group.");
 
             return;
         }
@@ -1407,4 +1442,11 @@ function startWorkshopBot() {
 }
 
 
-module.exports = { startWorkshopBot };
+module.exports = {
+    startWorkshopBot,
+    // Exported solely so a test can exercise the actual guard function
+    // (see test-security-fixes.js) without constructing a Bot instance or
+    // starting polling — calling startWorkshopBot() is still required to
+    // run the bot itself, and remains the only way to do so.
+    managerGroupBelongsToAnotherCompany
+};

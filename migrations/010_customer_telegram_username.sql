@@ -1,0 +1,31 @@
+-- Adds a nullable, best-effort Telegram PUBLIC USERNAME column to
+-- customers — separate from the existing `telegram_id` (a numeric
+-- account id, already present, set once a customer connects via the
+-- existing QR/deep-link flow).
+--
+-- Why this is needed: a numeric telegram_id alone can NEVER reliably
+-- produce a working personal-chat link (there is no guaranteed
+-- `t.me/<id>` or similar URL form for an arbitrary numeric Telegram
+-- user id). A public @username, when the user has set one, DOES
+-- reliably produce a working `https://t.me/<username>` link — this is
+-- the one piece of Telegram identity that makes a real "Chat on
+-- Telegram" button possible at all. See admin.js's renderTelegramAction
+-- / renderTelegramSection, which only ever show a clickable chat link
+-- when this column is non-null, and otherwise show the honest "linked,
+-- but no public username" or "not linked yet" state — never a
+-- fabricated link.
+--
+-- NOT applied by this file running — manual Supabase SQL editor step,
+-- same as every other migration in this project; no DDL execution
+-- capability exists from the application side.
+--
+-- Purely additive: one new nullable column, no existing rows touched.
+-- Not every Telegram user has a public username, and Telegram gives no
+-- change-notification when one is set/changed/removed later — this
+-- column is therefore always treated as "best effort, possibly stale,"
+-- refreshed opportunistically by index.js's connect_car_ handler on
+-- every successful connect (not just the first), never required for
+-- any existing flow to keep working.
+
+alter table customers
+    add column if not exists telegram_username text null;

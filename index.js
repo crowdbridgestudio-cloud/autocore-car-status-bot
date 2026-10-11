@@ -972,6 +972,23 @@ bot.callbackQuery(/^connect_car_(\d+)$/, async (ctx) => {
     }
 
 
+    // Best-effort capture of the customer's PUBLIC Telegram username, if
+    // they have one set — ctx.from.username is already present on this
+    // authenticated update, so this is a passive read of information the
+    // customer's own Telegram client just sent, not a new lookup. Not
+    // every Telegram user has a username (ctx.from.username is then
+    // undefined), and a username can change at any time with no change
+    // notification from Telegram, so this runs on every successful
+    // connect — not just first-time — to opportunistically refresh it.
+    // This is what lets the admin panel's "Chat on Telegram" button ever
+    // show a real, working link: a bare numeric telegram_id alone can
+    // never reliably produce one (see admin.js's renderTelegramAction).
+    await supabase
+        .from("customers")
+        .update({ telegram_username: ctx.from.username || null })
+        .eq("id", customer.id);
+
+
     // Connect car
 
     const { error: updateError } = await supabase

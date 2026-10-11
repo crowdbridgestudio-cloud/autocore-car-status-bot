@@ -225,6 +225,7 @@ const STRINGS = {
         company_archived: "❌ This service is currently unavailable. Please contact the workshop directly.",
         onboarding_generic: "🤖 *AutoCore*\n\nWelcome! To see your vehicle's status, please scan the QR code or open the link provided by your workshop.",
         car_different_company: "❌ Your Telegram account is already registered with a different workshop. Please contact support if you believe this is a mistake.",
+        my_vehicles_title: "🚗 *My Vehicles*\n\nSelect a vehicle to view its status:",
         menu_btn_status: "📊 Status",
         menu_btn_language: "🌐 Language",
         keyboard_hint: "You can always check your status or change language using the buttons below."
@@ -284,6 +285,7 @@ const STRINGS = {
         company_archived: "❌ Bu servis hazırda əlçatan deyil. Zəhmət olmasa birbaşa servislə əlaqə saxlayın.",
         onboarding_generic: "🤖 *AutoCore*\n\nXoş gəlmisiniz! Avtomobilinizin statusunu görmək üçün zəhmət olmasa servisinizin təqdim etdiyi QR kodu skan edin və ya linki açın.",
         car_different_company: "❌ Telegram hesabınız artıq başqa bir servisə qeydiyyatdan keçib. Bunun səhv olduğunu düşünürsünüzsə, dəstək xidməti ilə əlaqə saxlayın.",
+        my_vehicles_title: "🚗 *Avtomobillərim*\n\nStatusunu görmək üçün avtomobil seçin:",
         menu_btn_status: "📊 Status",
         menu_btn_language: "🌐 Dil",
         keyboard_hint: "Aşağıdakı düymələrdən istifadə edərək istənilən vaxt statusunuzu yoxlaya və ya dili dəyişə bilərsiniz."
@@ -343,6 +345,7 @@ const STRINGS = {
         company_archived: "❌ Bu servis şu anda kullanılamıyor. Lütfen servisle doğrudan iletişime geçin.",
         onboarding_generic: "🤖 *AutoCore*\n\nHoş geldiniz! Aracınızın durumunu görmek için lütfen servisinizin verdiği QR kodu tarayın veya bağlantıyı açın.",
         car_different_company: "❌ Telegram hesabınız zaten başka bir servise kayıtlı. Bunun bir hata olduğunu düşünüyorsanız lütfen destek ile iletişime geçin.",
+        my_vehicles_title: "🚗 *Araçlarım*\n\nDurumunu görmek için bir araç seçin:",
         menu_btn_status: "📊 Durum",
         menu_btn_language: "🌐 Dil",
         keyboard_hint: "Aşağıdaki düğmeleri kullanarak istediğiniz zaman durumunuzu kontrol edebilir veya dili değiştirebilirsiniz."
@@ -402,6 +405,7 @@ const STRINGS = {
         company_archived: "❌ Ten serwis jest obecnie niedostępny. Skontaktuj się bezpośrednio z warsztatem.",
         onboarding_generic: "🤖 *AutoCore*\n\nWitamy! Aby zobaczyć status swojego pojazdu, zeskanuj kod QR lub otwórz link otrzymany od swojego warsztatu.",
         car_different_company: "❌ Twoje konto Telegram jest już zarejestrowane w innym warsztacie. Jeśli uważasz, że to pomyłka, skontaktuj się z pomocą techniczną.",
+        my_vehicles_title: "🚗 *Moje pojazdy*\n\nWybierz pojazd, aby zobaczyć jego status:",
         menu_btn_status: "📊 Status",
         menu_btn_language: "🌐 Język",
         keyboard_hint: "Za pomocą przycisków poniżej możesz zawsze sprawdzić status lub zmienić język."
@@ -461,6 +465,7 @@ const STRINGS = {
         company_archived: "❌ Этот сервис временно недоступен. Пожалуйста, свяжитесь с сервисом напрямую.",
         onboarding_generic: "🤖 *AutoCore*\n\nДобро пожаловать! Чтобы увидеть статус вашего автомобиля, отсканируйте QR-код или откройте ссылку, предоставленную вашим сервисом.",
         car_different_company: "❌ Ваш аккаунт Telegram уже зарегистрирован в другом сервисе. Если вы считаете, что это ошибка, свяжитесь с поддержкой.",
+        my_vehicles_title: "🚗 *Мои автомобили*\n\nВыберите автомобиль, чтобы увидеть его статус:",
         menu_btn_status: "📊 Статус",
         menu_btn_language: "🌐 Язык",
         keyboard_hint: "Вы всегда можете проверить статус или изменить язык с помощью кнопок ниже."

@@ -60,6 +60,12 @@ const {
 
 const { toWhatsappDigits } = require("./utils");
 
+const {
+    resolveVehicleMenuMode,
+    buildVehicleListEntries,
+    buildContactServiceMessage
+} = require("./customerBotLogic");
+
 const bot = new Bot(process.env.BOT_TOKEN);
 
 // grammY's default behavior with NO error handler registered is to let an
@@ -359,6 +365,94 @@ function mainReplyKeyboard(lang) {
 // CUSTOMER MENU
 // ==================================================
 
+// The full per-vehicle menu (status/history/info/contact/delete) for ONE
+// car — this used to be sent once per linked vehicle, unconditionally,
+// every time "Status" was pressed (see showCustomerCars below for why
+// that was a problem for a customer with more than one vehicle). Now
+// it's sent only for the vehicle the customer actually asked to see:
+// either the one-and-only vehicle they have, or whichever one they just
+// picked from the My Vehicles list.
+async function sendVehicleCard(ctx, car, lang, edit) {
+
+    const keyboard = new InlineKeyboard()
+
+        .text(
+            t(lang, "btn_status_check"),
+            `car_status_${car.id}`
+        )
+
+        .row()
+
+        .text(
+            t(lang, "btn_history"),
+            `car_history_${car.id}`
+        )
+
+        .row()
+
+        .text(
+            t(lang, "btn_info"),
+            `car_info_${car.id}`
+        )
+
+        .row()
+
+        .text(
+            t(lang, "btn_contact"),
+            `contact_service_${car.id}`
+        )
+
+        .row()
+
+        .text(
+            t(lang, "btn_delete"),
+            `delete_car_confirm_${car.id}`
+        )
+
+        .row()
+
+        // Lets a customer who arrived here via the My Vehicles list (two
+        // or more linked vehicles) go back to that list — harmless for a
+        // customer with only one vehicle too, since "back" then simply
+        // re-shows this same card (showCustomerCars still resolves to
+        // the single-vehicle case).
+        .text(
+            t(lang, "btn_back"),
+            "customer_menu"
+        );
+
+
+    const message = t(lang, "car_card", {
+        brand: car.brand,
+        model: car.model,
+        registration: car.registration || "-",
+        status: statusLabel(lang, car.status)
+    });
+
+
+    if (edit) {
+
+        await ctx.editMessageText(
+            message,
+            {
+                parse_mode: "Markdown",
+                reply_markup: keyboard
+            }
+        );
+
+    } else {
+
+        await ctx.reply(
+            message,
+            {
+                parse_mode: "Markdown",
+                reply_markup: keyboard
+            }
+        );
+    }
+}
+
+
 async function showCustomerCars(ctx, edit = false) {
 
     const telegramId = ctx.from.id;
@@ -436,80 +530,105 @@ async function showCustomerCars(ctx, edit = false) {
     }
 
 
-    for (let i = 0; i < cars.length; i++) {
+    // Decides what to show: a customer with exactly one linked vehicle
+    // sees its full card directly (acceptable to open status right
+    // away — no extra tap needed); a customer with two or more linked
+    // vehicles sees ONE "My Vehicles" selector message, never one
+    // status message per vehicle. This is the direct fix for the
+    // previous behavior, where pressing "Status" sent one independent
+    // car-card message for every linked vehicle at once.
+    const mode = resolveVehicleMenuMode(cars);
 
-        const car = cars[i];
+    if (mode.mode === "single") {
 
-        const keyboard = new InlineKeyboard()
+        await sendVehicleCard(ctx, mode.car, lang, edit);
 
-            .text(
-                t(lang, "btn_status_check"),
-                `car_status_${car.id}`
-            )
-
-            .row()
-
-            .text(
-                t(lang, "btn_history"),
-                `car_history_${car.id}`
-            )
-
-            .row()
-
-            .text(
-                t(lang, "btn_info"),
-                `car_info_${car.id}`
-            )
-
-            .row()
-
-            .text(
-                t(lang, "btn_contact"),
-                `contact_service_${car.id}`
-            )
-
-            .row()
-
-            .text(
-                t(lang, "btn_delete"),
-                `delete_car_confirm_${car.id}`
-            );
+        return;
+    }
 
 
-        const message = t(lang, "car_card", {
-            brand: car.brand,
-            model: car.model,
-            registration: car.registration || "-",
-            status: statusLabel(lang, car.status)
-        });
+    const entries = buildVehicleListEntries(mode.cars, { lang, statusLabel });
 
+    const keyboard = new InlineKeyboard();
 
-        // Only the first car can reuse the message being edited (e.g. the
-        // "⬅️ Back" button click) — additional cars must be sent as new
-        // messages, otherwise each edit overwrites the previous one and
-        // customers with more than one car only ever see the last one.
-        if (edit && i === 0) {
+    for (const entry of entries) {
+        keyboard.text(entry.label, entry.callbackData).row();
+    }
 
-            await ctx.editMessageText(
-                message,
-                {
-                    parse_mode: "Markdown",
-                    reply_markup: keyboard
-                }
-            );
+    const listMessage = t(lang, "my_vehicles_title");
 
-        } else {
+    if (edit) {
 
-            await ctx.reply(
-                message,
-                {
-                    parse_mode: "Markdown",
-                    reply_markup: keyboard
-                }
-            );
-        }
+        await ctx.editMessageText(
+            listMessage,
+            {
+                parse_mode: "Markdown",
+                reply_markup: keyboard
+            }
+        );
+
+    } else {
+
+        await ctx.reply(
+            listMessage,
+            {
+                parse_mode: "Markdown",
+                reply_markup: keyboard
+            }
+        );
     }
 }
+
+
+// ==================================================
+// SELECT VEHICLE (from the My Vehicles list)
+// ==================================================
+
+bot.callbackQuery(/^select_vehicle_(\d+)$/, async (ctx) => {
+
+    const carId = ctx.match[1];
+    const telegramId = ctx.from.id;
+    const lang = await getLang(ctx);
+
+
+    // Same ownership re-verification pattern as every other per-car
+    // callback in this file (car_status_, car_history_, ...) — the
+    // tapped id is never trusted on its own, only whatever the car's own
+    // joined customer record actually says.
+    const { data: car } = await supabase
+        .from("cars")
+        .select("*, customers ( telegram_id )")
+        .eq("id", carId)
+        .maybeSingle();
+
+
+    if (!carBelongsToTelegramUser(car, telegramId)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "car_not_linked_to_you"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    if (await isCompanyArchived(car.company_id)) {
+
+        await ctx.answerCallbackQuery({
+            text: t(lang, "company_archived"),
+            show_alert: true
+        });
+
+        return;
+    }
+
+
+    await ctx.answerCallbackQuery();
+
+    await sendVehicleCard(ctx, car, lang, true);
+
+});
 
 
 // ==================================================
@@ -1361,54 +1480,37 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
 
 
     // Company-scoped contact people (migrations/012_company_contacts.sql)
-    // — distinct from the company's own phone/address (kept below as the
-    // existing fallback for any company that hasn't configured contact
-    // people yet, so nothing regresses for them). Never fabricates a
+    // — distinct from the company's own name/phone/address, which
+    // buildContactServiceMessage() below ALWAYS includes regardless of
+    // whether any contact people are configured (previously these were
+    // only shown in the no-contacts fallback, so a company with contacts
+    // configured never displayed its own basic info at all). car.company_id
+    // (not any client-supplied value) is the sole source of which
+    // company's contacts this can ever see — the same tenant scoping
+    // already enforced by the ownership check above. Never fabricates a
     // link: a contact only ever gets a Telegram button when a real
     // username is stored, and a WhatsApp button only when the stored
-    // phone normalizes to a complete number — re-validated here at
-    // render time via the same shared toWhatsappDigits() used by the
-    // admin panel, never trusted purely from how it was stored.
+    // phone normalizes to a complete number — re-validated at render
+    // time via the same shared toWhatsappDigits() used by the admin
+    // panel, never trusted purely from how it was stored.
     const { data: contacts } = await supabase
         .from("company_contacts")
         .select("role_label, phone, telegram_username")
         .eq("company_id", car.company_id)
         .order("created_at", { ascending: true });
 
+    const { message, buttons } = buildContactServiceMessage({
+        t,
+        toWhatsappDigits,
+        lang,
+        company: car.companies,
+        contacts
+    });
+
     const keyboard = new InlineKeyboard();
 
-    let message = t(lang, "contact_title") + `🏢 ${car.companies?.name || "-"}\n\n`;
-
-    if (contacts && contacts.length > 0) {
-
-        for (const contact of contacts) {
-
-            const waDigits = toWhatsappDigits(contact.phone);
-
-            message += `👤 *${contact.role_label}*\n`;
-
-            if (!contact.telegram_username && !waDigits) {
-                message += `${t(lang, "contact_method_not_configured")}\n`;
-            }
-
-            message += `\n`;
-
-            if (contact.telegram_username) {
-                keyboard.url(`💬 ${contact.role_label} — ${t(lang, "btn_telegram")}`, `https://t.me/${contact.telegram_username}`).row();
-            }
-
-            if (waDigits) {
-                keyboard.url(`💬 ${contact.role_label} — ${t(lang, "btn_whatsapp")}`, `https://wa.me/${waDigits}`).row();
-            }
-        }
-
-    } else {
-
-        // No contact people configured for this company yet — the
-        // original, unchanged fallback.
-        message +=
-            `📞 ${car.companies?.phone || t(lang, "contact_phone_missing")}\n\n` +
-            `📍 ${car.companies?.address || t(lang, "contact_address_missing")}`;
+    for (const button of buttons) {
+        keyboard.url(button.label, button.url).row();
     }
 
     keyboard.text(t(lang, "btn_back"), "customer_menu");

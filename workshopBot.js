@@ -55,19 +55,34 @@ async function managerGroupBelongsToAnotherCompany(managerGroupId, companyId) {
 // /save VEHICLE PICKER — shared state
 // ==================================================
 // Lets a mechanic send bare `/save` (no registration) and pick from
-// their workshop's recent vehicles instead of typing a plate. Both
-// Maps are in-memory/per-process (same pattern as the group-connect
-// feature's pendingGroupConnections) — no schema change needed.
-// Keyed by `${groupId}:${mechanicId}`, never just groupId, so two
-// mechanics saving in the same group at once never collide or
-// overwrite each other's in-progress pick or remembered vehicle.
+// their workshop's recent vehicles instead of typing a plate. There is
+// deliberately NO "remembered current vehicle" shortcut (removed): every
+// bare `/save` — even the very next one, even for the same mechanic in
+// the same group — always shows this picker again and requires an
+// explicit tap. A mechanic who wants to skip the picker can still use
+// the explicit `/save <registration>` form (unchanged, see below); that
+// form only ever affects the ONE save it's given for, never any save
+// after it.
 //
-// Hoisted to module scope (like managerGroupBelongsToAnotherCompany
-// above), rather than declared inside the `if (WORKSHOP_BOT_TOKEN)`
-// block below where every bot-wiring handler lives, specifically so a
-// test can inspect/drive this exact state without a real token or a
-// running bot — these are plain Maps and pure functions, nothing here
-// depends on `workshopBot` or `customerBot`.
+// pendingSaveTargets is keyed by (group, mechanic, AND the specific
+// source message being saved) — not just (group, mechanic) — so two
+// bare `/save` calls in flight at once for the SAME mechanic (e.g. they
+// reply-saved photo 1, then immediately reply-saved photo 2 before
+// tapping photo 1's picker) can never overwrite each other's pending
+// intent. Without this, the second /save's picker entry would replace
+// the first's in the map, and tapping photo 1's (now stale) picker
+// buttons would incorrectly save photo 2's content — exactly the
+// "stale selection / concurrent save attaches the wrong photo" failure
+// this is required to prevent. The picker's own callback_data carries
+// the same source message id for this reason (see the picker keyboard
+// below and the savepick_ handler).
+//
+// In-memory/per-process (same pattern as the group-connect feature's
+// pendingGroupConnections) — no schema change needed. Hoisted to module
+// scope (like managerGroupBelongsToAnotherCompany above), rather than
+// declared inside the `if (WORKSHOP_BOT_TOKEN)` block below where every
+// other bot-wiring handler lives, specifically so a test can
+// inspect/drive this exact state without a real token or a running bot.
 
 const pendingSaveTargets = new Map();
 const SAVE_INTENT_TTL_MS = 10 * 60 * 1000; // plenty of time to tap a picker button
@@ -84,27 +99,16 @@ function pruneExpiredSaveIntents() {
 }
 
 
-// "Temporary" is interpreted generously (a work-session scale, not a
-// single message) — long enough that a mechanic saving several
-// photos of the same car over a few hours never has to re-pick, short
-// enough that a stale pick from days ago doesn't linger forever.
-const currentVehicleByMechanic = new Map();
-const CURRENT_VEHICLE_TTL_MS = 12 * 60 * 60 * 1000;
-
-function pruneExpiredCurrentVehicles() {
-
-    const now = Date.now();
-
-    for (const [key, entry] of currentVehicleByMechanic) {
-        if (now - entry.setAt > CURRENT_VEHICLE_TTL_MS) {
-            currentVehicleByMechanic.delete(key);
-        }
-    }
+function mechanicKey(groupId, mechanicId) {
+    return `${groupId}:${mechanicId}`;
 }
 
 
-function mechanicKey(groupId, mechanicId) {
-    return `${groupId}:${mechanicId}`;
+// Scopes a pending picker intent to the EXACT photo/message it was
+// created for, not just the (group, mechanic) pair — see the comment
+// above for exactly why this matters.
+function saveIntentKey(groupId, mechanicId, sourceMessageId) {
+    return `${mechanicKey(groupId, mechanicId)}:${sourceMessageId}`;
 }
 
 
@@ -805,15 +809,14 @@ if (WORKSHOP_BOT_TOKEN) {
     // post the manager metadata message, confirm. Identical to the
     // original /save's tail in every respect (same fields, same error
     // messages, same "Send to customer" button); only extracted so the
-    // three entry points below (explicit registration, remembered
-    // current vehicle, picker tap) don't duplicate it. Always ends by
-    // offering "🔄 Change vehicle" so any successful save — including an
-    // explicit /save REGISTRATION — can seed or reset the remembered
-    // shortcut for next time.
+    // two entry points below (explicit registration, picker tap) don't
+    // duplicate it. There is no "remembered current vehicle" shortcut —
+    // every save is independently resolved, either explicitly by
+    // registration or by an explicit picker tap; nothing here persists
+    // across save operations.
     async function saveMediaToVehicle({ ctx, groupConfig, vehicle, sourceMessageId, mediaInfo, savedByName, replyOptions, isCallback }) {
 
         const groupId = ctx.chat.id;
-        const mechanicId = ctx.from.id;
 
         const respond = async (text, extra) => {
             if (isCallback) {
@@ -879,23 +882,6 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
 
-        // Every successful save — whether the vehicle was resolved by
-        // explicit registration, by reusing the remembered current
-        // vehicle, or by a picker tap — becomes the new "current vehicle"
-        // for this (group, mechanic) pair. Previously, only a picker tap
-        // ever set this (see the savepick_ handler below), so an explicit
-        // `/save <registration>` to vehicle B right after vehicle A had
-        // been picked left the remembered pointer silently stuck on A:
-        // the very next bare `/save` for a brand-new photo — even though
-        // the mechanic had JUST explicitly used B — would silently
-        // reattach to A again, and the only way out was noticing and
-        // pressing "Change vehicle". Setting it here, in the one function
-        // every save path already funnels through, makes every path agree
-        // on what "current" means and keeps the TTL rolling forward on
-        // continued use instead of counting from whenever it was first
-        // picked.
-        currentVehicleByMechanic.set(mechanicKey(groupId, mechanicId), { carId: vehicle.id, setAt: Date.now() });
-
         // Every field here comes from `vehicle.customers` — the same
         // company-scoped row fetched above — never a fresh lookup, so a
         // manager can never see another customer's (let alone another
@@ -931,8 +917,7 @@ if (WORKSHOP_BOT_TOKEN) {
 
 
         await respond(
-            `✅ Saved to ${vehicle.registration || `${vehicle.brand} ${vehicle.model}`} and sent to the manager group.`,
-            { reply_markup: new InlineKeyboard().text("🔄 Change vehicle", "change_vehicle") }
+            `✅ Saved to ${vehicle.registration || `${vehicle.brand} ${vehicle.model}`} and sent to the manager group.`
         );
     }
 
@@ -1111,44 +1096,14 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
 
-        // Bare /save — try the remembered current vehicle for this
-        // (group, mechanic) first.
-        const key = mechanicKey(groupId, mechanicId);
-
-        pruneExpiredCurrentVehicles();
-
-        const remembered = currentVehicleByMechanic.get(key);
-
-        if (remembered) {
-
-            // Defensive re-check, same as every other company-scoped
-            // lookup in this file — never trust a remembered id alone,
-            // in case the vehicle was deleted or (in principle) moved
-            // since it was picked.
-            const { data: vehicle } = await supabase
-                .from("cars")
-                .select("*, customers ( id, name, phone, telegram_id )")
-                .eq("id", remembered.carId)
-                .eq("company_id", groupConfig.company_id)
-                .maybeSingle();
-
-            if (vehicle) {
-
-                await saveMediaToVehicle({ ctx, groupConfig, vehicle, sourceMessageId, mediaInfo, savedByName, replyOptions });
-
-                return;
-            }
-
-            // No longer valid — fall through to the picker instead of
-            // silently failing, and clear the stale memory.
-            currentVehicleByMechanic.delete(key);
-        }
-
-
-        // No current vehicle — show the 8 most recently updated active
-        // vehicles for this company. Delivered/cancelled are excluded by
-        // default (unlikely a mechanic needs to attach new media to a
-        // vehicle that's already left).
+        // Bare /save — ALWAYS show the vehicle picker. There is no
+        // remembered/sticky vehicle to check or reuse: every save,
+        // including a photo from the very same mechanic right after
+        // their last one, requires an explicit pick. Show the 8 most
+        // recently updated active vehicles for this company.
+        // Delivered/cancelled are excluded by default (unlikely a
+        // mechanic needs to attach new media to a vehicle that's
+        // already left).
         const { data: recentVehicles, error: recentError } = await supabase
             .from("cars")
             .select("id, brand, model, registration, status")
@@ -1180,12 +1135,21 @@ if (WORKSHOP_BOT_TOKEN) {
         }
 
         pruneExpiredSaveIntents();
-        pendingSaveTargets.set(key, { groupConfig, sourceMessageId, mediaInfo, savedByName, startedAt: Date.now() });
+
+        // Keyed by the SPECIFIC source message being saved, not just
+        // (group, mechanic) — see this file's top-of-module comment on
+        // pendingSaveTargets for exactly why: it's what lets a second,
+        // concurrent /save (a different photo, picker not yet resolved)
+        // coexist safely instead of silently overwriting this one.
+        pendingSaveTargets.set(
+            saveIntentKey(groupId, mechanicId, sourceMessageId),
+            { groupConfig, sourceMessageId, mediaInfo, savedByName, startedAt: Date.now() }
+        );
 
         const pickerKeyboard = new InlineKeyboard();
 
         for (const v of recentVehicles) {
-            pickerKeyboard.text(`${v.brand} ${v.model} — ${v.registration || "?"}`, `savepick_${v.id}`).row();
+            pickerKeyboard.text(`${v.brand} ${v.model} — ${v.registration || "?"}`, `savepick_${sourceMessageId}_${v.id}`).row();
         }
 
         await ctx.reply(
@@ -1195,12 +1159,13 @@ if (WORKSHOP_BOT_TOKEN) {
     });
 
 
-    workshopBot.callbackQuery(/^savepick_(\d+)$/, async (ctx) => {
+    workshopBot.callbackQuery(/^savepick_(\d+)_(\d+)$/, async (ctx) => {
 
         const groupId = ctx.chat.id;
         const mechanicId = ctx.from.id;
-        const carId = ctx.match[1];
-        const key = mechanicKey(groupId, mechanicId);
+        const sourceMessageId = Number(ctx.match[1]);
+        const carId = ctx.match[2];
+        const key = saveIntentKey(groupId, mechanicId, sourceMessageId);
 
         pruneExpiredSaveIntents();
 
@@ -1233,11 +1198,6 @@ if (WORKSHOP_BOT_TOKEN) {
 
         pendingSaveTargets.delete(key);
 
-        // currentVehicleByMechanic is set inside saveMediaToVehicle() on
-        // success (single source of truth for every save path — see its
-        // comment), not here, so this picker path and every other path
-        // can never disagree about what "current" means.
-
         await ctx.answerCallbackQuery();
 
         await saveMediaToVehicle({
@@ -1249,46 +1209,6 @@ if (WORKSHOP_BOT_TOKEN) {
             savedByName: intent.savedByName,
             isCallback: true
         });
-    });
-
-
-    workshopBot.callbackQuery("change_vehicle", async (ctx) => {
-
-        const key = mechanicKey(ctx.chat.id, ctx.from.id);
-
-        currentVehicleByMechanic.delete(key);
-
-        await ctx.answerCallbackQuery({ text: "Current vehicle cleared." });
-
-        try {
-
-            await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-
-        } catch (editError) {
-            // Non-fatal — cosmetic only.
-        }
-    });
-
-
-    workshopBot.command("change_vehicle", async (ctx) => {
-
-        if (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") {
-
-            await ctx.reply("Use this command inside your workshop group.");
-
-            return;
-        }
-
-        const key = mechanicKey(ctx.chat.id, ctx.from.id);
-        const had = currentVehicleByMechanic.has(key);
-
-        currentVehicleByMechanic.delete(key);
-
-        await ctx.reply(
-            had
-                ? "✅ Current vehicle cleared. Reply to a photo and send /save to pick a new one."
-                : "ℹ️ You don't have a current vehicle set. Reply to a photo and send /save to pick one."
-        );
     });
 
 
@@ -1448,7 +1368,6 @@ function startWorkshopBot() {
 
     workshopBot.api.setMyCommands([
         { command: "save", description: "Save replied media — pick a vehicle, or /save EL12345" },
-        { command: "change_vehicle", description: "Clear your remembered current vehicle" },
         { command: "start", description: "Link your account / connect groups (DM only)" },
         { command: "connect_workshop", description: "Connect this group as a Workshop Group" },
         { command: "connect_manager", description: "Connect this group as the Manager Group" }
@@ -1477,20 +1396,21 @@ module.exports = {
     // starting polling — calling startWorkshopBot() is still required to
     // run the bot itself, and remains the only way to do so.
     managerGroupBelongsToAnotherCompany,
-    // Exported so a test can drive the REAL /save, savepick_, and
-    // change_vehicle handlers end-to-end via workshopBot.handleUpdate()
-    // — grammY's own update-processing entry point, which runs every
-    // registered middleware exactly as production does, without ever
-    // calling .start()/.stop() (no polling loop) or making a real
-    // network call (a test registers an api.config.use() transformer
-    // that intercepts outbound calls, same idea as admin.js's mock
-    // Supabase client interception). Only ever non-null when
-    // WORKSHOP_BOT_TOKEN is set, exactly like startWorkshopBot()'s own
-    // no-op behavior above when it isn't. currentVehicleByMechanic and
-    // mechanicKey are plain state/pure-function exports so a test can
-    // also assert on the "current vehicle" state directly, which is
-    // what the /save stale-context fix above actually changes.
+    // Exported so a test can drive the REAL /save and savepick_ handlers
+    // end-to-end via workshopBot.handleUpdate() — grammY's own update-
+    // processing entry point, which runs every registered middleware
+    // exactly as production does, without ever calling .start()/.stop()
+    // (no polling loop) or making a real network call (a test registers
+    // an api.config.use() transformer that intercepts outbound calls,
+    // same idea as admin.js's mock Supabase client interception). Only
+    // ever non-null when WORKSHOP_BOT_TOKEN is set, exactly like
+    // startWorkshopBot()'s own no-op behavior above when it isn't.
+    // pendingSaveTargets/mechanicKey/saveIntentKey are plain state/pure-
+    // function exports so a test can assert that a bare /save never
+    // leaves a stale, reusable vehicle selection behind, and that two
+    // concurrent picker intents for the same mechanic never collide.
     workshopBot,
-    currentVehicleByMechanic,
-    mechanicKey
+    pendingSaveTargets,
+    mechanicKey,
+    saveIntentKey
 };

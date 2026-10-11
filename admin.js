@@ -22,7 +22,7 @@ const {
     at
 } = require("./locales");
 
-const { escapeHtml } = require("./utils");
+const { escapeHtml, toWhatsappDigits, sanitizeTelegramUsername } = require("./utils");
 const { HEAD_META, BASE_STYLES, statusBadgeStyle, DOUBLE_SUBMIT_GUARD_SCRIPT, icon, renderAppShell } = require("./adminStyles");
 
 const notificationBot = new Bot(process.env.BOT_TOKEN);
@@ -98,37 +98,30 @@ function isValidVin(vin) {
     return trimmed.length >= 5 && trimmed.length <= 17 && /^[A-Za-z0-9]+$/.test(trimmed);
 }
 
-// Produces the digit string wa.me needs (no "+", no spaces/punctuation),
-// or null if the input can't be trusted to be a complete, real number.
-// Deliberately conservative — a loose 8-15 digit sanity bound (realistic
-// international phone number lengths), never padding/guessing a country
-// code or any other digit that isn't already in the input. Stripping a
-// leading "+" is removing a formatting character, not inventing data.
-function toWhatsappDigits(phone) {
-    if (!phone || typeof phone !== "string") return null;
-    const digits = phone.replace(/[^\d+]/g, "").replace(/^\+/, "");
-    return /^\d{8,15}$/.test(digits) ? digits : null;
-}
-
-// Real Telegram username rules: 5-32 characters, starts with a letter,
-// letters/digits/underscores only. Returns the cleaned username (a
-// leading "@" is stripped — that's how people naturally type it, not
-// part of the username itself), or the literal string "INVALID" if
-// something was entered but doesn't look like a real username — the
-// caller distinguishes "nothing entered" (null, fine, optional field)
-// from "entered but wrong" (must be rejected, not silently dropped).
-function sanitizeTelegramUsername(input) {
-    if (!input || typeof input !== "string") return null;
-    const trimmed = input.trim();
-    if (trimmed === "") return null;
-    const cleaned = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
-    return /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(cleaned) ? cleaned : "INVALID";
-}
-
+// toWhatsappDigits / sanitizeTelegramUsername moved to utils.js — now
+// shared by superadmin.js (company contact people) and index.js
+// (customer-facing contact buttons) too, not just this file. Re-imported
+// here (not re-defined) so every caller validates identically.
 const CONTACT_METHODS = ["telegram", "whatsapp"];
 
 function sanitizeContactMethod(input) {
     return CONTACT_METHODS.includes(input) ? input : null;
+}
+
+// Two customers can share a name — the dropdown must never rely on the
+// name alone to be identifiable, so every option's visible label
+// includes whatever distinguishing detail is actually on file (phone
+// and/or Telegram username), not just after selection. A customer with
+// neither on file still shows by name only — there's genuinely nothing
+// else to disambiguate them with, which is an accepted limit, not a bug.
+function formatCustomerOptionLabel(customer) {
+
+    const details = [];
+
+    if (customer.phone) details.push(customer.phone);
+    if (customer.telegram_username) details.push(`@${customer.telegram_username}`);
+
+    return details.length > 0 ? `${customer.name} — ${details.join(" / ")}` : customer.name;
 }
 const READY_STATUSES = ["ready"];
 const ACTIVE_STATUSES = STATUS_KEYS.filter(
@@ -1043,6 +1036,11 @@ router.get("/more", requireLogin, async (req, res) => {
                 <span>${at(lang, "nav_telegram_setup")}</span>
                 ${icon("chevron", "chevron")}
             </a>
+            <a class="more-item" href="/admin/settings/contacts">
+                ${icon("customers")}
+                <span>${at(lang, "nav_contact_people")}</span>
+                ${icon("chevron", "chevron")}
+            </a>
         </div>
 
         <p style="color:var(--text-muted);font-size:13px;margin:20px 0 8px;">${at(lang, "language_label")}</p>
@@ -1069,6 +1067,237 @@ router.get("/more", requireLogin, async (req, res) => {
 
 
 // ==========================================
+// SETTINGS — CONTACT PEOPLE
+// ==========================================
+// Company-scoped contact people the CUSTOMER bot's "Contact Service"
+// button can message directly (see index.js's contact_service_
+// handler) — distinct from a customer's own contact_method/
+// telegram_username (migrations 010/011), which describe how to reach
+// a CUSTOMER, never workshop staff. Requires migrations/012_company_contacts.sql.
+
+router.get("/settings/contacts", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+
+    const { data: contacts, error } = await supabase
+        .from("company_contacts")
+        .select("*")
+        .eq("company_id", req.session.companyId)
+        .order("created_at", { ascending: true });
+
+    if (error) {
+        console.error("settings/contacts: lookup error:", error.message);
+        return res.send(`
+            <h2>${at(lang, "contacts_unavailable_title")}</h2>
+            <p>${at(lang, "contacts_unavailable_message")}</p>
+            <a href="/admin/more">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    const contactRows = (contacts || []).map((c) => `
+        <div class="card" style="margin-bottom:12px;">
+            <form method="POST" action="/admin/settings/contacts/${c.id}">
+
+                <label>${at(lang, "label_contact_role")}</label>
+                <input name="role_label" value="${escapeHtml(c.role_label)}" required />
+
+                <label>${at(lang, "label_contact_phone")}</label>
+                <input name="phone" type="tel" value="${escapeHtml(c.phone)}" placeholder="+48 123 456 789" />
+
+                <label>${at(lang, "label_contact_telegram")}</label>
+                <input name="telegram_username" value="${escapeHtml(c.telegram_username)}" placeholder="primegarage1" />
+
+                <div class="actions-row" style="margin-top:10px;">
+                    <button class="btn btn-primary" style="flex:1;">${at(lang, "save_button")}</button>
+                </div>
+
+            </form>
+            <form method="POST" action="/admin/settings/contacts/${c.id}/delete" style="margin-top:8px;" onsubmit="return confirm('${at(lang, "remove_contact_confirm")}');">
+                <button class="btn btn-danger btn-block">${at(lang, "remove_contact_button")}</button>
+            </form>
+        </div>
+    `).join("");
+
+    const bodyHtml = `
+        <div class="top-row">
+            <h2>${at(lang, "contact_people_title")}</h2>
+        </div>
+
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px;">${at(lang, "contact_people_subtitle")}</p>
+
+        ${contactRows || `<p style="color:var(--text-muted);">${at(lang, "no_contacts_yet")}</p>`}
+
+        <h2 style="margin-top:20px;">${at(lang, "add_contact_heading")}</h2>
+
+        <div class="card">
+            <form method="POST" action="/admin/settings/contacts">
+
+                <label>${at(lang, "label_contact_role")}</label>
+                <input name="role_label" placeholder="Owner" required />
+
+                <label>${at(lang, "label_contact_phone")}</label>
+                <input name="phone" type="tel" placeholder="+48 123 456 789" />
+
+                <label>${at(lang, "label_contact_telegram")}</label>
+                <input name="telegram_username" placeholder="primegarage1" />
+
+                <button class="btn btn-primary btn-block" style="margin-top:12px;" data-loading-text="${at(lang, "save_button")}...">
+                    ${at(lang, "add_contact_button")}
+                </button>
+
+            </form>
+        </div>
+
+        <a href="/admin/more" class="btn btn-outline btn-block" style="margin-top:16px;">
+            ${at(lang, "back_to_admin")}
+        </a>
+    `;
+
+    res.send(renderShellPage({
+        lang,
+        activeKey: "more",
+        pageTitle: at(lang, "contact_people_title"),
+        bodyHtml
+    }));
+});
+
+
+router.post("/settings/contacts", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+    const { role_label, phone, telegram_username } = req.body;
+
+    if (!role_label || !role_label.trim()) {
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <p>${at(lang, "contact_role_required")}</p>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    const sanitizedUsername = sanitizeTelegramUsername(telegram_username);
+
+    if (sanitizedUsername === "INVALID") {
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <p>${at(lang, "invalid_telegram_username")}</p>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    const { error } = await supabase
+        .from("company_contacts")
+        .insert({
+            company_id: req.session.companyId,
+            role_label: role_label.trim(),
+            phone: (phone || "").trim() || null,
+            telegram_username: sanitizedUsername
+        });
+
+    if (error) {
+        console.error("settings/contacts create error:", error.message);
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <pre>${escapeHtml(error.message)}</pre>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    res.redirect("/admin/settings/contacts");
+});
+
+
+router.post("/settings/contacts/:id", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+    const contactId = req.params.id;
+    const { role_label, phone, telegram_username } = req.body;
+
+    if (!role_label || !role_label.trim()) {
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <p>${at(lang, "contact_role_required")}</p>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    const sanitizedUsername = sanitizeTelegramUsername(telegram_username);
+
+    if (sanitizedUsername === "INVALID") {
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <p>${at(lang, "invalid_telegram_username")}</p>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    // Ownership check IS the WHERE clause — a forged :id belonging to
+    // another company updates zero rows, never that company's contact.
+    const { data: updatedRows, error } = await supabase
+        .from("company_contacts")
+        .update({
+            role_label: role_label.trim(),
+            phone: (phone || "").trim() || null,
+            telegram_username: sanitizedUsername,
+            updated_at: new Date().toISOString()
+        })
+        .eq("id", contactId)
+        .eq("company_id", req.session.companyId)
+        .select();
+
+    if (error) {
+        console.error("settings/contacts update error:", error.message);
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <pre>${escapeHtml(error.message)}</pre>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+        return res.send(`
+            <h2>${at(lang, "contact_not_found_title")}</h2>
+            <a href="/admin/settings/contacts">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    res.redirect("/admin/settings/contacts");
+});
+
+
+router.post("/settings/contacts/:id/delete", requireLogin, async (req, res) => {
+
+    const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
+    const contactId = req.params.id;
+
+    const { data: deletedRows, error } = await supabase
+        .from("company_contacts")
+        .delete()
+        .eq("id", contactId)
+        .eq("company_id", req.session.companyId)
+        .select();
+
+    if (error) {
+        console.error("settings/contacts delete error:", error.message);
+        return res.send(`
+            <h2>${at(lang, "contact_save_error_title")}</h2>
+            <pre>${escapeHtml(error.message)}</pre>
+            <a href="/admin/settings/contacts">${at(lang, "go_back")}</a>
+        `);
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+        return res.send(`
+            <h2>${at(lang, "contact_not_found_title")}</h2>
+            <a href="/admin/settings/contacts">${at(lang, "back_to_admin")}</a>
+        `);
+    }
+
+    res.redirect("/admin/settings/contacts");
+});
+
+
+// ==========================================
 // ADD CAR PAGE
 // ==========================================
 
@@ -1089,9 +1318,20 @@ router.get("/add-car", requireLogin, async (req, res) => {
     }
 
 
+    // Each option carries its own disambiguating detail (phone and/or
+    // Telegram username) directly in the visible label — two customers
+    // sharing a name are never indistinguishable in the dropdown itself,
+    // not just after picking one. data-* attributes let the inline
+    // script below auto-populate the read-only info panel from the SAME
+    // query that already built the dropdown — no extra request.
     const customerOptions = customers.map(customer => `
-        <option value="${customer.id}">
-            ${escapeHtml(customer.name)}
+        <option
+            value="${customer.id}"
+            data-phone="${escapeHtml(customer.phone)}"
+            data-contact-method="${escapeHtml(customer.contact_method)}"
+            data-telegram="${escapeHtml(customer.telegram_username)}"
+        >
+            ${escapeHtml(formatCustomerOptionLabel(customer))}
         </option>
     `).join("");
 
@@ -1113,7 +1353,7 @@ router.get("/add-car", requireLogin, async (req, res) => {
 
                         <label>${at(lang, "label_customer")}</label>
 
-                        <select name="customer_id">
+                        <select name="customer_id" id="customerSelect">
 
                             <option value="">
                                 ${at(lang, "select_customer_placeholder")}
@@ -1123,6 +1363,18 @@ router.get("/add-car", requireLogin, async (req, res) => {
 
                         </select>
 
+                        <!-- Shown only when an EXISTING customer is picked — read-only,
+                             pulled straight from that customer's own record (never
+                             copied from a different customer, never guessed). Hides
+                             the "add new customer" section below so there's never any
+                             ambiguity about which path a submission will take. -->
+                        <div id="existingCustomerInfo" class="card" style="display:none;margin-top:10px;padding:12px;background:var(--bg);">
+                            <div class="car-meta">${at(lang, "label_contact_phone")}: <span id="existingCustomerPhone"></span></div>
+                            <div class="car-meta">${at(lang, "contact_method_label")}: <span id="existingCustomerContactMethod"></span></div>
+                            <div class="car-meta">${at(lang, "label_contact_telegram")}: <span id="existingCustomerTelegram"></span></div>
+                        </div>
+
+                        <div id="newCustomerSection">
 
                         <p style="color:#6b7280;font-size:13px;margin:16px 0 4px;">
                             ${at(lang, "new_customer_heading")}
@@ -1169,6 +1421,37 @@ router.get("/add-car", requireLogin, async (req, res) => {
                             <p style="color:var(--text-muted);font-size:12px;margin:2px 0 0;">${at(lang, "telegram_username_hint")}</p>
 
                         </div>
+
+                        </div>
+
+                        <script>
+                            (function () {
+                                var select = document.getElementById("customerSelect");
+                                var infoPanel = document.getElementById("existingCustomerInfo");
+                                var newCustomerSection = document.getElementById("newCustomerSection");
+                                var phoneEl = document.getElementById("existingCustomerPhone");
+                                var contactMethodEl = document.getElementById("existingCustomerContactMethod");
+                                var telegramEl = document.getElementById("existingCustomerTelegram");
+                                var NOT_ON_FILE = ${JSON.stringify(at(lang, "not_on_file"))};
+
+                                function update() {
+                                    var opt = select.options[select.selectedIndex];
+                                    var hasExisting = opt && opt.value !== "";
+
+                                    infoPanel.style.display = hasExisting ? "" : "none";
+                                    newCustomerSection.style.display = hasExisting ? "none" : "";
+
+                                    if (hasExisting) {
+                                        phoneEl.textContent = opt.dataset.phone || NOT_ON_FILE;
+                                        contactMethodEl.textContent = opt.dataset.contactMethod || NOT_ON_FILE;
+                                        telegramEl.textContent = opt.dataset.telegram ? ("@" + opt.dataset.telegram) : NOT_ON_FILE;
+                                    }
+                                }
+
+                                select.addEventListener("change", update);
+                                update();
+                            })();
+                        </script>
 
 
                         <label>${at(lang, "label_brand")}</label>
@@ -2464,7 +2747,139 @@ async function getWorkshopBotUsername() {
 const CONNECT_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 
-router.get("/telegram-setup", requireLogin, async (req, res) => {
+// Four distinguishable states, never fewer: a database field being
+// populated is NOT the same claim as "the bot can actually reach this
+// group right now" — getChat() is the one reliable way the bot itself
+// can tell. Never deletes/modifies the saved group id regardless of
+// outcome — this is a pure read, called only when staff explicitly ask
+// for it (not on every page load, to avoid spending an API call nobody
+// asked for).
+//   - "not_configured": no group id saved at all yet.
+//   - "linked": getChat() succeeds — the bot can currently see this chat.
+//   - "not_linked": getChat() fails with an error Telegram uses
+//     specifically for "this bot is no longer in that chat" (kicked,
+//     left, or the chat doesn't exist/was deleted).
+//   - "unavailable": the bot isn't configured, or getChat() failed for
+//     any OTHER reason (network blip, rate limit) — explicitly NOT the
+//     same claim as "not linked".
+// Takes the bot instance as a parameter (rather than closing over the
+// module-level workshopApiBot) specifically so this can be unit-tested
+// with a fake bot object — zero real Telegram API calls needed to test
+// the state-classification logic itself.
+async function checkGroupTelegramStatus(bot, groupId) {
+
+    if (!groupId) return { state: "not_configured" };
+
+    if (!bot) return { state: "unavailable", reason: "Workshop Bot is not configured on this server." };
+
+    try {
+
+        await bot.api.getChat(groupId);
+        return { state: "linked" };
+
+    } catch (err) {
+
+        const description = String(err?.description || err?.message || "").toLowerCase();
+
+        const confirmedGone =
+            description.includes("chat not found") ||
+            description.includes("kicked") ||
+            description.includes("not a member") ||
+            description.includes("bot was blocked");
+
+        if (confirmedGone) {
+            return { state: "not_linked", reason: err.description || err.message };
+        }
+
+        return { state: "unavailable", reason: err.description || err.message || "Unknown error" };
+    }
+}
+
+
+function renderGroupStatusPill(statusResult, lang) {
+
+    const stylesByState = {
+        linked: "background:var(--success-bg);color:var(--success-text);",
+        not_linked: "background:var(--danger-bg);color:var(--danger-text);",
+        unavailable: "background:var(--border);color:var(--text);",
+        not_configured: "background:var(--border);color:var(--text-muted);"
+    };
+
+    const labelKeysByState = {
+        linked: "group_status_linked",
+        not_linked: "group_status_not_linked",
+        unavailable: "group_status_unavailable",
+        not_configured: "group_status_not_configured"
+    };
+
+    const state = statusResult?.state || "unavailable";
+
+    return `<span class="pill-muted" style="${stylesByState[state]}">${at(lang, labelKeysByState[state])}</span>`;
+}
+
+// Shared by the GET page and the "Check Groups Status" POST result —
+// `groupStatuses` is null before the admin has asked for a check (no
+// Telegram API call happens just from loading the page), or
+// `{ workshopGroups: [{ workshopGroupId, status }], managerGroup: { status } }`
+// once they have. `botUsername` (already resolved) is reused for the
+// plain, no-token reconnect link below — an already-linked admin never
+// needs a new QR/token just to reconnect a specific group, they only
+// need to reopen the bot and tap the same menu again.
+function renderGroupsStatusSection({ lang, botUsername, groupStatuses }) {
+
+    const reconnectLink = botUsername ? `https://t.me/${botUsername}` : null;
+
+    const reconnectBlock = reconnectLink ? `
+        <p style="font-size:13px;color:var(--text-muted);margin-top:10px;">${at(lang, "reconnect_group_instructions")}</p>
+        <a class="btn btn-outline btn-block" href="${reconnectLink}" target="_blank" rel="noopener noreferrer">${at(lang, "reconnect_group_button")}</a>
+    ` : "";
+
+    if (!groupStatuses) {
+        return `
+            <hr class="section-divider" />
+            <h2>${at(lang, "groups_status_heading")}</h2>
+            <form method="POST" action="/admin/telegram-setup/check-status">
+                <button class="btn btn-outline btn-block">${at(lang, "check_groups_status_button")}</button>
+            </form>
+        `;
+    }
+
+    const workshopRows = groupStatuses.workshopGroups.length > 0
+        ? groupStatuses.workshopGroups.map((g) => `
+            <div class="car-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;">
+                <span>${at(lang, "workshop_group_label")}</span>
+                ${renderGroupStatusPill(g.status, lang)}
+            </div>
+        `).join("")
+        : `
+            <div class="car-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;">
+                <span>${at(lang, "workshop_group_label")}</span>
+                ${renderGroupStatusPill({ state: "not_configured" }, lang)}
+            </div>
+        `;
+
+    const anyNotFullyLinked = groupStatuses.workshopGroups.some((g) => g.status.state !== "linked") || groupStatuses.managerGroup.state !== "linked";
+
+    return `
+        <hr class="section-divider" />
+        <h2>${at(lang, "groups_status_heading")}</h2>
+
+        ${workshopRows}
+
+        <div class="car-meta" style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0;">
+            <span>${at(lang, "manager_group_label")}</span>
+            ${renderGroupStatusPill(groupStatuses.managerGroup, lang)}
+        </div>
+
+        ${anyNotFullyLinked ? reconnectBlock : ""}
+
+        <form method="POST" action="/admin/telegram-setup/check-status" style="margin-top:10px;">
+            <button class="btn btn-outline btn-block">${at(lang, "check_groups_status_button")}</button>
+        </form>
+    `;
+}
+
+async function renderTelegramSetupPage({ req, res, groupStatuses = null }) {
 
     const lang = req.session.adminLang || DEFAULT_ADMIN_LANG;
 
@@ -2535,6 +2950,7 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
                     ` : admin?.telegram_id ? `
                         <p class="notice-banner success">${at(lang, "telegram_setup_linked")}</p>
                         <p>${at(lang, "telegram_setup_linked_instructions")}</p>
+                        ${renderGroupsStatusSection({ lang, botUsername, groupStatuses })}
                     ` : liveToken ? `
                         <p>${at(lang, "telegram_setup_scan_instructions")}</p>
                         <img class="qr-img" src="${qr}" />
@@ -2568,6 +2984,39 @@ router.get("/telegram-setup", requireLogin, async (req, res) => {
             .telegram-link { word-break: break-all; background: #f3f4f6; padding: 10px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 16px; }
         `
     }));
+}
+
+router.get("/telegram-setup", requireLogin, async (req, res) => {
+    await renderTelegramSetupPage({ req, res });
+});
+
+
+router.post("/telegram-setup/check-status", requireLogin, async (req, res) => {
+
+    // Company-scoped read, same pattern as every other query in this
+    // file. Never deletes or modifies workshop_telegram_groups — this
+    // route only ever reads the saved ids and asks Telegram about them.
+    const { data: groupRows, error } = await supabase
+        .from("workshop_telegram_groups")
+        .select("*")
+        .eq("company_id", req.session.companyId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: true });
+
+    if (error) {
+        console.error("telegram-setup/check-status: lookup error:", error.message);
+        return await renderTelegramSetupPage({ req, res });
+    }
+
+    const workshopGroups = [];
+    for (const row of (groupRows || [])) {
+        workshopGroups.push({ workshopGroupId: row.workshop_group_id, status: await checkGroupTelegramStatus(workshopApiBot, row.workshop_group_id) });
+    }
+
+    const managerGroupId = (groupRows || []).find((r) => r.manager_group_id)?.manager_group_id || null;
+    const managerGroup = await checkGroupTelegramStatus(workshopApiBot, managerGroupId);
+
+    await renderTelegramSetupPage({ req, res, groupStatuses: { workshopGroups, managerGroup } });
 });
 
 
@@ -2626,3 +3075,4 @@ module.exports.isValidVin = isValidVin;
 module.exports.toWhatsappDigits = toWhatsappDigits;
 module.exports.sanitizeTelegramUsername = sanitizeTelegramUsername;
 module.exports.sanitizeContactMethod = sanitizeContactMethod;
+module.exports.checkGroupTelegramStatus = checkGroupTelegramStatus;

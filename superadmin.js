@@ -5,7 +5,7 @@ const bcrypt = require("bcrypt");
 const supabase = require("./supabase");
 
 const { ADMIN_LANGS, ADMIN_LANGUAGE_LABELS, DEFAULT_ADMIN_LANG, normalizeAdminLang } = require("./locales");
-const { escapeHtml, escapeJsString } = require("./utils");
+const { escapeHtml, escapeJsString, sanitizeTelegramUsername } = require("./utils");
 
 const router = express.Router();
 
@@ -928,6 +928,37 @@ function renderNewServiceForm({ values = {}, errorMessage = null }) {
                     ${languageOptions}
                 </select>
 
+                <div class="section-title">Contact people (optional)</div>
+                <p style="font-size:12px;color:#6b7280;margin:0 0 10px;">
+                    Shown to customers in the Telegram bot's "Contact Service" menu. Leave blank to skip — can be added later from the workshop's own Settings page.
+                </p>
+
+                <div class="form-grid">
+                    <div>
+                        <label>Contact 1 — role/name</label>
+                        <input name="contact1_role" value="${escapeHtml(values.contact1_role)}" placeholder="Owner" />
+                    </div>
+                    <div>
+                        <label>Contact 1 — WhatsApp phone</label>
+                        <input name="contact1_phone" value="${escapeHtml(values.contact1_phone)}" placeholder="+48 123 456 789" />
+                    </div>
+                </div>
+                <label>Contact 1 — Telegram username</label>
+                <input name="contact1_telegram" value="${escapeHtml(values.contact1_telegram)}" placeholder="primegarage1" />
+
+                <div class="form-grid" style="margin-top:14px;">
+                    <div>
+                        <label>Contact 2 — role/name</label>
+                        <input name="contact2_role" value="${escapeHtml(values.contact2_role)}" placeholder="Manager" />
+                    </div>
+                    <div>
+                        <label>Contact 2 — WhatsApp phone</label>
+                        <input name="contact2_phone" value="${escapeHtml(values.contact2_phone)}" placeholder="+48 123 456 789" />
+                    </div>
+                </div>
+                <label>Contact 2 — Telegram username</label>
+                <input name="contact2_telegram" value="${escapeHtml(values.contact2_telegram)}" placeholder="primegarage_manager" />
+
                 <div class="section-title">Admin information</div>
 
                 <div class="form-grid">
@@ -984,10 +1015,16 @@ router.post("/companies", requireSuperAdmin, async (req, res) => {
         language,
         admin_name,
         admin_username,
-        admin_password
+        admin_password,
+        contact1_role, contact1_phone, contact1_telegram,
+        contact2_role, contact2_phone, contact2_telegram
     } = req.body;
 
-    const values = { name, phone, address, language, admin_name, admin_username };
+    const values = {
+        name, phone, address, language, admin_name, admin_username,
+        contact1_role, contact1_phone, contact1_telegram,
+        contact2_role, contact2_phone, contact2_telegram
+    };
 
 
     // --------------------------------------
@@ -1000,6 +1037,17 @@ router.post("/companies", requireSuperAdmin, async (req, res) => {
     if (!admin_name || !admin_name.trim()) errors.push("Admin name is required.");
     if (!admin_username || !admin_username.trim()) errors.push("Admin username is required.");
     if (!admin_password || admin_password.length < 8) errors.push("Admin password must be at least 8 characters.");
+
+    // Both contact slots are fully optional (a contact with no role at
+    // all simply isn't created) — only the Telegram username is hard-
+    // validated when present, same rule and same shared helper used by
+    // admin.js and index.js, so a garbled username is rejected here
+    // rather than silently stored and shown broken to a customer later.
+    const sanitizedContact1Telegram = sanitizeTelegramUsername(contact1_telegram);
+    const sanitizedContact2Telegram = sanitizeTelegramUsername(contact2_telegram);
+
+    if (sanitizedContact1Telegram === "INVALID") errors.push("Contact 1's Telegram username isn't valid (5-32 letters, numbers, or underscores).");
+    if (sanitizedContact2Telegram === "INVALID") errors.push("Contact 2's Telegram username isn't valid (5-32 letters, numbers, or underscores).");
 
     const lang = normalizeAdminLang(language) || DEFAULT_ADMIN_LANG;
 
@@ -1108,6 +1156,42 @@ router.post("/companies", requireSuperAdmin, async (req, res) => {
                 errorMessage: `The admin account could not be created (${friendlyMessage}). No company was left behind — please try again.`
             })
         }));
+    }
+
+
+    // --------------------------------------
+    // OPTIONAL CONTACT PEOPLE (non-fatal — a failure here never rolls
+    // back the already-created company/admin; it's logged and the
+    // workshop can add contacts later from their own Settings page).
+    // --------------------------------------
+
+    const contactRowsToInsert = [];
+
+    if (contact1_role && contact1_role.trim()) {
+        contactRowsToInsert.push({
+            company_id: company.id,
+            role_label: contact1_role.trim(),
+            phone: (contact1_phone || "").trim() || null,
+            telegram_username: sanitizedContact1Telegram
+        });
+    }
+
+    if (contact2_role && contact2_role.trim()) {
+        contactRowsToInsert.push({
+            company_id: company.id,
+            role_label: contact2_role.trim(),
+            phone: (contact2_phone || "").trim() || null,
+            telegram_username: sanitizedContact2Telegram
+        });
+    }
+
+    if (contactRowsToInsert.length > 0) {
+
+        const { error: contactsError } = await supabase.from("company_contacts").insert(contactRowsToInsert);
+
+        if (contactsError) {
+            console.error("Optional contact people could not be saved (company/admin creation still succeeded):", contactsError.message);
+        }
     }
 
 

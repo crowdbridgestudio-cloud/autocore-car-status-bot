@@ -73,6 +73,16 @@ const db = {
     vehicle_service_notes: [
         { id: 1, car_id: 1, company_id: 1, mileage_km: 184250, note: "Engine oil and filter changed.", created_by_admin_id: 1, created_at: new Date(Date.now() - 86400000 * 30).toISOString() },
         { id: 2, car_id: 1, company_id: 1, mileage_km: 186100, note: "Front brake pads replaced.", created_by_admin_id: 1, created_at: new Date(Date.now() - 86400000 * 5).toISOString() }
+    ],
+    // Empty on purpose — previews the "not configured yet" group status
+    // honestly, since no Workshop Bot token exists in this local demo
+    // anyway (confirmed: the Check Groups Status button only ever makes
+    // a real Telegram call through admin.js's own workshopApiBot, which
+    // is null here, same as production without WORKSHOP_BOT_TOKEN set).
+    workshop_telegram_groups: [],
+    // Requires migrations/012_company_contacts.sql in real production.
+    company_contacts: [
+        { id: 1, company_id: 1, role_label: "Owner", phone: "+15005550100", telegram_username: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
     ]
 };
 

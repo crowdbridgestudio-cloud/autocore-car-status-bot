@@ -58,6 +58,8 @@ const {
     statusLabel
 } = require("./locales");
 
+const { toWhatsappDigits } = require("./utils");
+
 const bot = new Bot(process.env.BOT_TOKEN);
 
 // grammY's default behavior with NO error handler registered is to let an
@@ -1358,12 +1360,58 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
 
 
-    const message =
+    // Company-scoped contact people (migrations/012_company_contacts.sql)
+    // — distinct from the company's own phone/address (kept below as the
+    // existing fallback for any company that hasn't configured contact
+    // people yet, so nothing regresses for them). Never fabricates a
+    // link: a contact only ever gets a Telegram button when a real
+    // username is stored, and a WhatsApp button only when the stored
+    // phone normalizes to a complete number — re-validated here at
+    // render time via the same shared toWhatsappDigits() used by the
+    // admin panel, never trusted purely from how it was stored.
+    const { data: contacts } = await supabase
+        .from("company_contacts")
+        .select("role_label, phone, telegram_username")
+        .eq("company_id", car.company_id)
+        .order("created_at", { ascending: true });
 
-        t(lang, "contact_title") +
-        `🏢 ${car.companies?.name || "-"}\n\n` +
-        `📞 ${car.companies?.phone || t(lang, "contact_phone_missing")}\n\n` +
-        `📍 ${car.companies?.address || t(lang, "contact_address_missing")}`;
+    const keyboard = new InlineKeyboard();
+
+    let message = t(lang, "contact_title") + `🏢 ${car.companies?.name || "-"}\n\n`;
+
+    if (contacts && contacts.length > 0) {
+
+        for (const contact of contacts) {
+
+            const waDigits = toWhatsappDigits(contact.phone);
+
+            message += `👤 *${contact.role_label}*\n`;
+
+            if (!contact.telegram_username && !waDigits) {
+                message += `${t(lang, "contact_method_not_configured")}\n`;
+            }
+
+            message += `\n`;
+
+            if (contact.telegram_username) {
+                keyboard.url(`💬 ${contact.role_label} — ${t(lang, "btn_telegram")}`, `https://t.me/${contact.telegram_username}`).row();
+            }
+
+            if (waDigits) {
+                keyboard.url(`💬 ${contact.role_label} — ${t(lang, "btn_whatsapp")}`, `https://wa.me/${waDigits}`).row();
+            }
+        }
+
+    } else {
+
+        // No contact people configured for this company yet — the
+        // original, unchanged fallback.
+        message +=
+            `📞 ${car.companies?.phone || t(lang, "contact_phone_missing")}\n\n` +
+            `📍 ${car.companies?.address || t(lang, "contact_address_missing")}`;
+    }
+
+    keyboard.text(t(lang, "btn_back"), "customer_menu");
 
 
     await ctx.editMessageText(
@@ -1372,13 +1420,7 @@ bot.callbackQuery(/^contact_service_(\d+)$/, async (ctx) => {
 
         {
             parse_mode: "Markdown",
-
-            reply_markup: new InlineKeyboard()
-
-                .text(
-                    t(lang, "btn_back"),
-                    "customer_menu"
-                )
+            reply_markup: keyboard
         }
     );
 
